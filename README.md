@@ -1,18 +1,14 @@
 # Radar Legislativo
 
-Projeto Python para um desafio de monitoramento legislativo.
+Desafio Xperiun Pos em Engenharia de Dados e IA.
 
-A ideia inicial e organizar proposicoes, filtrar por temas de interesse e gerar uma prioridade simples para acompanhamento.
+Projeto Python para monitoramento legislativo. A ideia inicial e organizar proposicoes, filtrar por temas de interesse e gerar uma prioridade simples para acompanhamento.
 
 ## Requisitos
 
 - Python 3.11+
 
 ## Como rodar
-
-```powershell
-python -m radar_legislativo.cli
-```
 
 Durante o desenvolvimento, rode a partir da raiz usando:
 
@@ -38,4 +34,3 @@ src/radar_legislativo/
 tests/
   test_radar.py
 ```
-
