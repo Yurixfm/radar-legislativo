@@ -92,14 +92,30 @@ Cada execução grava o JSON bruto em `data/raw/<entidade>/` (pasta ignorada
 pelo Git — é volumosa e 100% reprodutível a partir da extração). Também é
 possível rodar cada extração isoladamente, ex.: `python -m src.extract.extract_proposicoes`.
 
-## Modelo de dados (planejado para a Etapa 3)
+## Modelo de dados (mapa de projeção para a Etapa 3)
 
-- **Dimensões**: `deputados` (id, nome, partido, UF, ...), `partidos` (id, sigla, nome)
-- **Fatos**: `proposicoes` (ementa, tipo, situação, ...), `votacoes` (descrição, aprovação, ...),
-  `votos` (deputado × votação × tipoVoto), `despesas` (deputado × documento × valor)
+A extração salva o JSON **bruto e completo**; a tabela abaixo é o contrato
+que a transformação (Etapa 3) vai seguir para projetar cada entidade nas
+tabelas do PostgreSQL — ela está detalhada, endpoint a endpoint, com
+exemplos reais e pendências identificadas, em
+[`notebooks/01_exploracao_api.py`](notebooks/01_exploracao_api.py#L153) (seção
+"Mapa de projeção oficial para a Etapa 3").
 
-O detalhamento de colunas e relacionamentos será documentado quando a Etapa 3
-(carga no PostgreSQL) estiver pronta.
+| Tabela | Tipo | Colunas projetadas |
+|---|---|---|
+| `DimDeputado` | dimensão | `id`, `nome`, `siglaPartido`, `siglaUf`, `idLegislatura`, `email`, `urlFoto` |
+| `DimPartido` | dimensão | `id`, `sigla`, `nome` |
+| `DimTema` | dimensão (gerada por IA — Etapa 4) | `idTema`, `nomeTema` (ex.: Saúde, Tributário, Energia, Tecnologia...) |
+| `FatoProposicao` | fato | `id`, `siglaTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`, `descricaoTipo`, `descricaoSituacao`, `siglaOrgao`, `regime`, `despacho`, `urlInteiroTeor`, `temaIA` (Etapa 4) |
+| `FatoVotacao` | fato | `id`, `data`, `dataHoraRegistro`, `siglaOrgao`, `descricao`, `aprovacao` |
+| `votos` | fato (grão deputado × votação) | `idVotacao`, `idDeputado`, `tipoVoto`, `dataRegistroVoto` |
+| `despesas` | fato (grão deputado × documento) | `idDeputado`, `ano`, `mes`, `tipoDespesa`, `dataDocumento`, `valorDocumento`, `valorLiquido`, `valorGlosa`, `nomeFornecedor`, `cnpjCpfFornecedor` |
+
+**Pendências documentadas (decisão: adiar para quando a Etapa 3 precisar de fato)**:
+- `partidos.status`/`numeroEleitoral` — só existem no detalhe `/partidos/{id}` (26 chamadas extras), não na listagem.
+- `proposicoes.autor` (nome de quem propôs) — exige `/proposicoes/{id}/autores` (~692 chamadas extras na janela de 7 dias); guardamos `uriAutores` no bruto e resolvemos sob demanda, só para o recorte que entra no relatório.
+- `votacoes.idProposicao` — não existe como campo direto; precisa ser **derivado** de `efeitosRegistrados[].uriProposicao` (regra documentada no notebook, parsing fica para a Etapa 3).
+- `votacoes.orientacoesBancada` — sub-recurso `/votacoes/{id}/orientacoes` (~33 chamadas extras); fica como melhoria futura, não bloqueia o MVP.
 
 ## Requisitos
 

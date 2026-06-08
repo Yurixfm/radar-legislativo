@@ -148,3 +148,77 @@ resp.json()["dados"][0]
 # | `/votacoes` | sim (`links.next`) | janela de `data` (7 dias) | diária / incremental |
 # | `/votacoes/{id}/votos` | **não** (lista única) | — | acoplado à extração de votações |
 # | `/deputados/{id}/despesas` | sim (`links.next`) | `ano`/`mes` + `limite_deputados` | mensal, com limite controlado |
+
+# %% [markdown]
+# ## Mapa de projeção oficial para a Etapa 3 (transformação)
+#
+# A extração (Etapa 2) salva o JSON **bruto e completo** em disco — exatamente
+# como o desafio recomenda ("salve antes de transformar, para não precisar
+# rechamar a API"). A seleção de campos abaixo é o contrato que a Etapa 3 vai
+# seguir ao montar os DataFrames/tabelas: o que entra em cada
+# dimensão/fato, e o que fica de fora por enquanto.
+#
+# ### `DimDeputado` (de `/deputados`)
+# `id`, `nome`, `siglaPartido`, `siglaUf`, `idLegislatura`, `email`,
+# `urlFoto`. *Ignorar*: `uri`/`uriPartido` (links de navegação).
+#
+# ### `DimPartido` (de `/partidos`)
+# `id`, `sigla`, `nome` — disponíveis na listagem `/partidos`.
+#
+# > ⚠️ **Pendência identificada nesta exploração**: `status.situacao`
+# > (Ativo/Inativo, líder da bancada) e `numeroEleitoral` só existem no
+# > detalhe `/partidos/{id}`, não na listagem — confirmei chamando
+# > `/partidos/36899` (retornou `status.situacao: "Ativo"`, líder
+# > "Isnaldo Bulhões Jr.", `numeroEleitoral: null`). Capturar isso exigiria
+# > 26 chamadas extras (uma por partido). Decisão: **adiar** — só vale a
+# > pena chamar o detalhe quando a Etapa 3 realmente for usar `status`/
+# > `numeroEleitoral` na análise (ex.: filtrar partidos ativos).
+#
+# ### `DimTema` (gerada por IA — Etapa 4)
+# `idTema`, `nomeTema`. Não vem da API: é o resultado da classificação por
+# embeddings/LLM sobre a `ementa` de cada proposição.
+#
+# ### `FatoProposicao` (de `/proposicoes`)
+# `id`, `siglaTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`,
+# `descricaoTipo`, `statusProposicao.descricaoSituacao`,
+# `statusProposicao.siglaOrgao`, `statusProposicao.regime`,
+# `statusProposicao.despacho`, `urlInteiroTeor`, `temaIA` (gerado na Etapa 4).
+#
+# > ⚠️ **Pendência**: `autor` (nome de quem propôs) não vem na listagem —
+# > só a URL `uriAutores`. O nome só aparece em
+# > `/proposicoes/{id}/autores` (testei com a proposição 2630081: devolveu
+# > `nome: "Evair Vieira de Melo"`, `tipo: "Deputado(a)"`,
+# > `proponente: 1`). Para a janela de 7 dias isso seria ~692 chamadas
+# > extras. Decisão: **adiar** — guardamos a `uriAutores` no bruto e
+# > resolvemos o nome do autor sob demanda (ex.: só para as ~5-10
+# > proposições que entram no relatório semanal, não para as 692 inteiras).
+# >
+# > `keywords` veio `null` em todas as amostras observadas — não é
+# > confiável como classificação auxiliar; é por isso que a Etapa 4 (IA)
+# > existe.
+#
+# ### `FatoVotacao` (de `/votacoes` + `/votacoes/{id}/votos`)
+# `id`, `data`, `dataHoraRegistro`, `siglaOrgao`, `descricao`, `aprovacao`
+# (votação) e `idVotacao` (anexado), `deputado_.id`, `tipoVoto`,
+# `dataRegistroVoto` (voto individual).
+#
+# > ⚠️ **Pendência**: não existe um campo `idProposicao` direto na
+# > votação — o vínculo votação→proposição vem de `proposicaoObjeto`
+# > (quase sempre `null` nas amostras) ou de
+# > `efeitosRegistrados[].uriProposicao` (testei com a votação 2629954-8:
+# > trouxe `uriProposicao` apontando pro PL 957/2024). Extrair isso exige
+# > parsear uma lista que pode ter 0..N proposições por votação — uma regra
+# > de derivação, não um campo direto. Decisão: **documentar a regra agora,
+# > implementar o parsing na Etapa 3**, quando os dois lados (proposições e
+# > votações) já estiverem nas tabelas para validar o cruzamento.
+# >
+# > `orientacoesBancada` é outro sub-recurso (`/votacoes/{id}/orientacoes`,
+# > ~33 chamadas extras na janela de 7 dias) — vazio na amostra testada
+# > (votação 2480299-56). Fica como **melhoria futura** para a análise de
+# > "qual partido orienta como" — não bloqueia o MVP.
+#
+# ### `despesas` (de `/deputados/{id}/despesas`) — mantido no escopo
+# `idDeputado` (anexado), `ano`, `mes`, `tipoDespesa`, `dataDocumento`,
+# `valorDocumento`, `valorLiquido`, `valorGlosa`, `nomeFornecedor`,
+# `cnpjCpfFornecedor`. Diferencial extra do projeto além do "core"
+# (deputados/partidos/proposições/votações) — já extraído e validado.
