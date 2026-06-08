@@ -245,7 +245,7 @@ resp.json()["dados"][0]
 # > (votação 2480299-56). Fica como **melhoria futura** para a análise de
 # > "qual partido orienta como" — não bloqueia o MVP.
 #
-# ### `despesas` (de `/deputados/{id}/despesas`) — mantido no escopo
+# ### `fato_despesas` (de `/deputados/{id}/despesas`) — mantido no escopo
 # `idDeputado` (anexado), `ano`, `mes`, `tipoDespesa`, `dataDocumento`,
 # `valorDocumento`, `valorLiquido`, `valorGlosa`, `nomeFornecedor`,
 # `cnpjCpfFornecedor`. Diferencial extra do projeto além do "core"

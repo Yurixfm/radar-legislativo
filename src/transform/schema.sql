@@ -2,9 +2,20 @@
 -- Aplicado de forma idempotente por src/transform/db.py::aplicar_schema()
 -- (todas as instruções usam IF NOT EXISTS — rodar de novo não quebra nada).
 --
--- Convenção: nomes de tabela em snake_case (idiomático no Postgres); o
--- "Dim"/"Fato" do mapa de projeção (notebooks/01_exploracao_api.py, seção
--- "Mapa de projeção oficial para a Etapa 3") vira o prefixo dim_/fato_ aqui.
+-- Convenção: nomes de tabela em snake_case (idiomático no Postgres) com
+-- prefixo dim_/fato_ conforme o papel no modelo dimensional — toda tabela
+-- de granularidade fina (1 linha por evento/transação) é "fato", mesmo as
+-- que entraram como diferenciais do projeto (votos, despesas) e não tinham
+-- nome formal `FatoX` no mapa de projeção original.
+
+-- Renomeações: tabelas que já existiam como `votos`/`despesas` (sem prefixo)
+-- antes de essa convenção ser uniformizada. `IF EXISTS` torna isso seguro
+-- tanto numa base nova (nunca existiram com o nome antigo — vira no-op)
+-- quanto na já populada no Supabase (renomeia preservando os dados; o
+-- CREATE TABLE IF NOT EXISTS abaixo então não faz nada, pois a tabela já
+-- existe com o nome novo).
+ALTER TABLE IF EXISTS votos    RENAME TO fato_votos;
+ALTER TABLE IF EXISTS despesas RENAME TO fato_despesas;
 
 -- ===================== DIMENSÕES =====================
 
@@ -75,7 +86,7 @@ CREATE TABLE IF NOT EXISTS fato_votacoes (
 -- entre os ~512 "em exercício hoje" capturados em dim_deputados — exigir essa
 -- FK quebraria a carga sempre que um suplente aparecesse. Decisão de escopo
 -- documentada no README (seção "Modelo de dados").
-CREATE TABLE IF NOT EXISTS votos (
+CREATE TABLE IF NOT EXISTS fato_votos (
     id_votacao          TEXT NOT NULL REFERENCES fato_votacoes(id),
     id_deputado         INTEGER NOT NULL,
     tipo_voto           TEXT,
@@ -84,9 +95,9 @@ CREATE TABLE IF NOT EXISTS votos (
 );
 
 -- Grão: 1 linha por (deputado, documento fiscal). Sem FK para dim_deputados
--- pelo mesmo motivo de `votos`: despesas de meses passados podem citar
+-- pelo mesmo motivo de `fato_votos`: despesas de meses passados podem citar
 -- deputados que não estão mais em exercício hoje.
-CREATE TABLE IF NOT EXISTS despesas (
+CREATE TABLE IF NOT EXISTS fato_despesas (
     id_deputado             INTEGER NOT NULL,
     cod_documento           TEXT NOT NULL,
     ano                     INTEGER,

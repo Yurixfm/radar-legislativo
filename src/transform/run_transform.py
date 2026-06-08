@@ -28,8 +28,8 @@ PASSOS = [
     ("dim_deputados", transformar_deputados, ["id"]),
     ("fato_proposicoes", transformar_proposicoes, ["id"]),
     ("fato_votacoes", transformar_votacoes, ["id"]),
-    ("votos", transformar_votos, ["id_votacao", "id_deputado"]),
-    ("despesas", transformar_despesas, ["id_deputado", "cod_documento"]),
+    ("fato_votos", transformar_votos, ["id_votacao", "id_deputado"]),
+    ("fato_despesas", transformar_despesas, ["id_deputado", "cod_documento"]),
 ]
 
 

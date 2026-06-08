@@ -108,8 +108,17 @@ exemplos reais e pendências identificadas, em
 | `DimTema` | dimensão (gerada por IA — Etapa 4) | `idTema`, `nomeTema` (ex.: Saúde, Tributário, Energia, Tecnologia...) |
 | `FatoProposicao` | fato | `id`, `siglaTipo`, `codTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`, `temaIA` (Etapa 4) |
 | `FatoVotacao` | fato | `id`, `data`, `dataHoraRegistro`, `siglaOrgao`, `descricao`, `aprovacao`, `idProposicao` (derivado, ver abaixo) |
-| `votos` | fato (grão deputado × votação) | `idVotacao`, `idDeputado`, `tipoVoto`, `dataRegistroVoto` |
-| `despesas` | fato (grão deputado × documento) | `idDeputado`, `ano`, `mes`, `tipoDespesa`, `dataDocumento`, `valorDocumento`, `valorLiquido`, `valorGlosa`, `nomeFornecedor`, `cnpjCpfFornecedor` |
+| `fato_votos` | fato (grão deputado × votação) | `idVotacao`, `idDeputado`, `tipoVoto`, `dataRegistroVoto` |
+| `fato_despesas` | fato (grão deputado × documento) | `idDeputado`, `ano`, `mes`, `tipoDespesa`, `dataDocumento`, `valorDocumento`, `valorLiquido`, `valorGlosa`, `nomeFornecedor`, `cnpjCpfFornecedor` |
+
+> Nota de nomenclatura: `votos`/`despesas` entraram como diferenciais do
+> projeto e não tinham nome formal `FatoX` no mapa de projeção original — por
+> isso, ao perceber a inconsistência, renomeei as tabelas físicas para
+> `fato_votos`/`fato_despesas`, deixando o prefixo `fato_`/`dim_` consistente
+> em todo o modelo (toda tabela de grão fino — 1 linha por evento/transação —
+> é uma tabela fato, independente de ter entrado no "core" do modelo ou como
+> extra). A migração (`ALTER TABLE ... RENAME`) preserva os dados já
+> carregados no Supabase.
 
 > **Critério de projeção**: além dos campos que só existem em endpoints de detalhe (pendências abaixo), removemos do modelo final qualquer campo que (a) ficaria permanentemente em branco, (b) é apenas um link de navegação (`uri`/`uriPartido`, reconstituível a partir do `id`) ou (c) é um link de imagem (`urlFoto`) — nenhum agrega valor analítico ao projeto.
 
