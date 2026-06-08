@@ -106,12 +106,13 @@ exemplos reais e pendências identificadas, em
 | `DimDeputado` | dimensão | `id`, `nome`, `siglaPartido`, `siglaUf`, `idLegislatura`, `email`, `urlFoto` |
 | `DimPartido` | dimensão | `id`, `sigla`, `nome` |
 | `DimTema` | dimensão (gerada por IA — Etapa 4) | `idTema`, `nomeTema` (ex.: Saúde, Tributário, Energia, Tecnologia...) |
-| `FatoProposicao` | fato | `id`, `siglaTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`, `descricaoTipo`, `descricaoSituacao`, `siglaOrgao`, `regime`, `despacho`, `urlInteiroTeor`, `temaIA` (Etapa 4) |
+| `FatoProposicao` | fato | `id`, `siglaTipo`, `codTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`, `uri`, `temaIA` (Etapa 4) — `descricaoTipo`/`descricaoSituacao`/`siglaOrgao`/`regime`/`despacho`/`urlInteiroTeor` ficam `NULL` por ora (pendência abaixo) |
 | `FatoVotacao` | fato | `id`, `data`, `dataHoraRegistro`, `siglaOrgao`, `descricao`, `aprovacao` |
 | `votos` | fato (grão deputado × votação) | `idVotacao`, `idDeputado`, `tipoVoto`, `dataRegistroVoto` |
 | `despesas` | fato (grão deputado × documento) | `idDeputado`, `ano`, `mes`, `tipoDespesa`, `dataDocumento`, `valorDocumento`, `valorLiquido`, `valorGlosa`, `nomeFornecedor`, `cnpjCpfFornecedor` |
 
 **Pendências documentadas (decisão: adiar para quando a Etapa 3 precisar de fato)**:
+- `proposicoes.descricaoTipo`/`statusProposicao.*` (situação atual da tramitação)/`urlInteiroTeor` — só existem no detalhe `/proposicoes/{id}` (~700 chamadas extras na janela de 7 dias), não na listagem usada na extração; confirmei que não há atalho via querystring (`campos=situacao` → 400, `codSituacao=` filtra mas não projeta campos). `fato_proposicoes` guarda essas colunas como `NULL`, a serem enriquecidas sob demanda no futuro (ex.: só para as proposições do relatório semanal).
 - `partidos.status`/`numeroEleitoral` — só existem no detalhe `/partidos/{id}` (26 chamadas extras), não na listagem.
 - `proposicoes.autor` (nome de quem propôs) — exige `/proposicoes/{id}/autores` (~692 chamadas extras na janela de 7 dias); guardamos `uriAutores` no bruto e resolvemos sob demanda, só para o recorte que entra no relatório.
 - `votacoes.idProposicao` — não existe como campo direto; precisa ser **derivado** de `efeitosRegistrados[].uriProposicao` (regra documentada no notebook, parsing fica para a Etapa 3).

@@ -73,12 +73,16 @@ prop
 # - Qual tipo de proposição (PL, PEC, REQ, MPV...) é mais comum?
 # - Qual a velocidade de tramitação por tipo/órgão?
 #
-# **Decisão de campos → fato `proposicoes`**: `id`, `siglaTipo`, `numero`,
-# `ano`, `ementa`, `dataApresentacao`, `descricaoTipo`,
-# `statusProposicao.descricaoSituacao`, `statusProposicao.siglaOrgao`,
-# `urlInteiroTeor`. A `ementa` é o campo que alimenta a Etapa 4
-# (embeddings/resumo). Descartamos `despacho` (texto longo e repetitivo) e
-# `keywords` (quase sempre nulo nas amostras observadas).
+# **Decisão de campos → fato `proposicoes`**: `id`, `siglaTipo`, `codTipo`,
+# `numero`, `ano`, `ementa`, `dataApresentacao`, `uri` — os campos que a
+# *listagem* de fato devolve. A `ementa` é o campo que alimenta a Etapa 4
+# (embeddings/resumo).
+#
+# > ⚠️ Uma versão anterior desta decisão também listava `descricaoTipo`,
+# > `statusProposicao.*` e `urlInteiroTeor` — ao montar a Etapa 3 descobri que
+# > esses campos **não vêm na listagem**, só no detalhe `/proposicoes/{id}`
+# > (ver "Pendência nº 5" no mapa de projeção oficial, mais abaixo). Corrigido
+# > aqui para refletir o que a extração realmente captura.
 #
 # **Por que filtrar por data de apresentação?** Sem o filtro, o endpoint
 # devolve centenas de milhares de proposições históricas — o erro clássico
@@ -179,10 +183,25 @@ resp.json()["dados"][0]
 # embeddings/LLM sobre a `ementa` de cada proposição.
 #
 # ### `FatoProposicao` (de `/proposicoes`)
-# `id`, `siglaTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`,
-# `descricaoTipo`, `statusProposicao.descricaoSituacao`,
-# `statusProposicao.siglaOrgao`, `statusProposicao.regime`,
-# `statusProposicao.despacho`, `urlInteiroTeor`, `temaIA` (gerado na Etapa 4).
+# `id`, `siglaTipo`, `codTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`,
+# `uri`, `temaIA` (gerado na Etapa 4) — **estes são os únicos campos que o
+# endpoint de LISTAGEM realmente devolve** (ver seção 3 acima).
+#
+# > ⚠️ **Pendência nº 5** (descoberta ao montar a Etapa 3, corrige a versão
+# > anterior deste mapa, que listava campos de detalhe como se viessem da
+# > listagem): `descricaoTipo`, `statusProposicao.descricaoSituacao`,
+# > `statusProposicao.siglaOrgao`, `statusProposicao.regime`,
+# > `statusProposicao.despacho` e `urlInteiroTeor` **não existem na resposta
+# > de `/proposicoes`** — só em `/proposicoes/{id}` (detalhe). Confirmei que
+# > não há atalho via querystring: `campos=situacao` devolve 400 ("Parâmetro(s)
+# > inválido(s)") e `codSituacao=924` funciona como *filtro*, não como seletor
+# > de campos. Para popular esses campos em todas as ~700 proposições da janela
+# > seriam necessárias ~700 chamadas extras/semana — mesma classe de custo das
+# > pendências de `autor`/`orientacoesBancada` acima. Decisão: **seguir só com
+# > os campos da listagem por agora** — `fato_proposicoes` guarda essas colunas
+# > como `NULL` (schema já as prevê) para um enriquecimento seletivo futuro
+# > (ex.: detalhar sob demanda só as ~5-10 proposições do relatório semanal,
+# > não as ~700 inteiras).
 #
 # > ⚠️ **Pendência**: `autor` (nome de quem propôs) não vem na listagem —
 # > só a URL `uriAutores`. O nome só aparece em
