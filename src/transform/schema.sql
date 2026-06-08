@@ -20,8 +20,7 @@ CREATE TABLE IF NOT EXISTS dim_deputados (
     sigla_partido   TEXT,
     sigla_uf        CHAR(2),
     id_legislatura  INTEGER,
-    email           TEXT,
-    url_foto        TEXT
+    email           TEXT
 );
 
 -- Populada pela Etapa 4 (classificação por IA) — fica vazia até lá.
@@ -40,31 +39,30 @@ CREATE TABLE IF NOT EXISTS fato_proposicoes (
     ano                 INTEGER,
     ementa              TEXT,
     data_apresentacao   TIMESTAMP,
-    uri                 TEXT,
-    -- Pendência nº 5 (ver notebooks/01_exploracao_api.py "Mapa de projeção
-    -- oficial"): só o endpoint de DETALHE (/proposicoes/{id}) preenche estas
-    -- colunas — a listagem usada na extração não as devolve. Ficam NULL até
-    -- existir uma etapa de enriquecimento seletivo (não vale a pena ~700
-    -- chamadas extras/semana só para isso).
-    descricao_tipo      TEXT,
-    descricao_situacao  TEXT,
-    sigla_orgao         TEXT,
-    regime              TEXT,
-    despacho            TEXT,
-    url_inteiro_teor    TEXT,
     -- preenchidos pela Etapa 4 (camada de IA) — ficam NULL até lá
     id_tema             INTEGER REFERENCES dim_temas(id_tema),
     tema_ia             TEXT,
     resumo_ia           TEXT
 );
+-- Pendência nº 5 (ver notebooks/01_exploracao_api.py "Mapa de projeção
+-- oficial"): situação da tramitação, descrição do tipo e inteiro teor só
+-- existem no endpoint de DETALHE (/proposicoes/{id}, ~700 chamadas extras
+-- por semana). Decisão: não reservar colunas em branco para isso agora — se
+-- um enriquecimento seletivo futuro for implementado, as colunas entram via
+-- migração junto com os dados (não antes).
 
+-- Sem FK para dim_proposicoes: a votação pode referenciar uma proposição que
+-- não está na janela atual de extração — exigir a FK quebraria a carga.
 CREATE TABLE IF NOT EXISTS fato_votacoes (
     id                  TEXT PRIMARY KEY,
     data                DATE,
     data_hora_registro  TIMESTAMP,
     sigla_orgao         TEXT,
     descricao           TEXT,
-    aprovacao           SMALLINT
+    aprovacao           SMALLINT,
+    -- Derivado de `uriProposicaoObjeto` (ver transform_votacoes.py) — fica
+    -- NULL quando a votação não está associada a uma proposição específica.
+    id_proposicao       BIGINT
 );
 
 -- Grão: 1 linha por (votação, deputado).
@@ -102,3 +100,25 @@ CREATE TABLE IF NOT EXISTS despesas (
     cnpj_cpf_fornecedor     TEXT,
     PRIMARY KEY (id_deputado, cod_documento)
 );
+
+-- ===================== MIGRAÇÕES IDEMPOTENTES =====================
+-- Evoluções do schema sobre tabelas que já existem em produção (Supabase já
+-- estava carregado quando essas mudanças foram decididas). `IF EXISTS`/
+-- `IF NOT EXISTS` tornam isso seguro tanto numa base nova quanto numa já
+-- populada — pode rodar quantas vezes quiser.
+
+-- Removidas por serem links de navegação/imagem que não agregam à análise.
+ALTER TABLE dim_deputados    DROP COLUMN IF EXISTS url_foto;
+ALTER TABLE fato_proposicoes DROP COLUMN IF EXISTS uri;
+
+-- Removidas por ficarem permanentemente em branco: só o endpoint de detalhe
+-- (/proposicoes/{id}) preenche estes campos — pendência nº 5 (ver acima).
+ALTER TABLE fato_proposicoes DROP COLUMN IF EXISTS descricao_tipo;
+ALTER TABLE fato_proposicoes DROP COLUMN IF EXISTS descricao_situacao;
+ALTER TABLE fato_proposicoes DROP COLUMN IF EXISTS sigla_orgao;
+ALTER TABLE fato_proposicoes DROP COLUMN IF EXISTS regime;
+ALTER TABLE fato_proposicoes DROP COLUMN IF EXISTS despacho;
+ALTER TABLE fato_proposicoes DROP COLUMN IF EXISTS url_inteiro_teor;
+
+-- Adicionada: vínculo votação → proposição, derivado de uriProposicaoObjeto.
+ALTER TABLE fato_votacoes ADD COLUMN IF NOT EXISTS id_proposicao BIGINT;

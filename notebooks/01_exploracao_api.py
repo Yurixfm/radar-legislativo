@@ -163,8 +163,9 @@ resp.json()["dados"][0]
 # dimensão/fato, e o que fica de fora por enquanto.
 #
 # ### `DimDeputado` (de `/deputados`)
-# `id`, `nome`, `siglaPartido`, `siglaUf`, `idLegislatura`, `email`,
-# `urlFoto`. *Ignorar*: `uri`/`uriPartido` (links de navegação).
+# `id`, `nome`, `siglaPartido`, `siglaUf`, `idLegislatura`, `email`.
+# *Ignorar*: `uri`/`uriPartido` (links de navegação) e `urlFoto` (link de
+# imagem — removido do modelo final por não agregar a nenhuma análise).
 #
 # ### `DimPartido` (de `/partidos`)
 # `id`, `sigla`, `nome` — disponíveis na listagem `/partidos`.
@@ -184,8 +185,10 @@ resp.json()["dados"][0]
 #
 # ### `FatoProposicao` (de `/proposicoes`)
 # `id`, `siglaTipo`, `codTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`,
-# `uri`, `temaIA` (gerado na Etapa 4) — **estes são os únicos campos que o
-# endpoint de LISTAGEM realmente devolve** (ver seção 3 acima).
+# `temaIA` (gerado na Etapa 4) — **estes são os únicos campos relevantes que o
+# endpoint de LISTAGEM realmente devolve** (ver seção 3 acima). *Ignorar*:
+# `uri` (link de navegação reconstituível a partir do `id` — removido do
+# modelo final por não agregar a nenhuma análise).
 #
 # > ⚠️ **Pendência nº 5** (descoberta ao montar a Etapa 3, corrige a versão
 # > anterior deste mapa, que listava campos de detalhe como se viessem da
@@ -198,10 +201,11 @@ resp.json()["dados"][0]
 # > de campos. Para popular esses campos em todas as ~700 proposições da janela
 # > seriam necessárias ~700 chamadas extras/semana — mesma classe de custo das
 # > pendências de `autor`/`orientacoesBancada` acima. Decisão: **seguir só com
-# > os campos da listagem por agora** — `fato_proposicoes` guarda essas colunas
-# > como `NULL` (schema já as prevê) para um enriquecimento seletivo futuro
-# > (ex.: detalhar sob demanda só as ~5-10 proposições do relatório semanal,
-# > não as ~700 inteiras).
+# > os campos da listagem por agora** — e **não** reservar colunas em branco
+# > para isso no schema (evita colunas permanentemente `NULL` no banco). Se um
+# > enriquecimento seletivo futuro for implementado (ex.: detalhar sob demanda
+# > só as ~5-10 proposições do relatório semanal, não as ~700 inteiras), as
+# > colunas entram via migração junto com os dados.
 #
 # > ⚠️ **Pendência**: `autor` (nome de quem propôs) não vem na listagem —
 # > só a URL `uriAutores`. O nome só aparece em
@@ -217,20 +221,25 @@ resp.json()["dados"][0]
 # > existe.
 #
 # ### `FatoVotacao` (de `/votacoes` + `/votacoes/{id}/votos`)
-# `id`, `data`, `dataHoraRegistro`, `siglaOrgao`, `descricao`, `aprovacao`
-# (votação) e `idVotacao` (anexado), `deputado_.id`, `tipoVoto`,
-# `dataRegistroVoto` (voto individual).
+# `id`, `data`, `dataHoraRegistro`, `siglaOrgao`, `descricao`, `aprovacao`,
+# `idProposicao` (derivado — ver nota abaixo) (votação) e `idVotacao`
+# (anexado), `deputado_.id`, `tipoVoto`, `dataRegistroVoto` (voto individual).
 #
-# > ⚠️ **Pendência**: não existe um campo `idProposicao` direto na
-# > votação — o vínculo votação→proposição vem de `proposicaoObjeto`
-# > (quase sempre `null` nas amostras) ou de
-# > `efeitosRegistrados[].uriProposicao` (testei com a votação 2629954-8:
-# > trouxe `uriProposicao` apontando pro PL 957/2024). Extrair isso exige
-# > parsear uma lista que pode ter 0..N proposições por votação — uma regra
-# > de derivação, não um campo direto. Decisão: **documentar a regra agora,
-# > implementar o parsing na Etapa 3**, quando os dois lados (proposições e
-# > votações) já estiverem nas tabelas para validar o cruzamento.
-# >
+# > ✅ **Pendência nº 3 resolvida na Etapa 3** (`transform_votacoes.py`):
+# > não existe um campo `idProposicao` direto na votação, mas a própria
+# > LISTAGEM `/votacoes` traz `uriProposicaoObjeto`
+# > (`https://.../proposicoes/{id}`) — basta extrair o id numérico do final
+# > da URL via regex, **sem nenhuma chamada extra**. Corrijo aqui uma
+# > imprecisão da exploração inicial: o campo usável é `uriProposicaoObjeto`
+# > (presente na listagem), não `efeitosRegistrados[].uriProposicao` (visto
+# > apenas em chamada de detalhe — mesma classe da pendência nº 5). Na
+# > amostra de 33 votações, 8 trazem `uriProposicaoObjeto` preenchido; as
+# > demais (votações de mesa diretora, atas, eleições internas etc.) não
+# > estão associadas a uma proposição específica e ficam `NULL` — por isso
+# > `fato_votacoes.id_proposicao` não tem FK para `fato_proposicoes` (a
+# > proposição referenciada também pode estar fora da janela extraída;
+# > confirmei isso na carga real: 7 das 8 resolveram, 1 ficou "órfã").
+#
 # > `orientacoesBancada` é outro sub-recurso (`/votacoes/{id}/orientacoes`,
 # > ~33 chamadas extras na janela de 7 dias) — vazio na amostra testada
 # > (votação 2480299-56). Fica como **melhoria futura** para a análise de

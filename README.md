@@ -103,19 +103,23 @@ exemplos reais e pendências identificadas, em
 
 | Tabela | Tipo | Colunas projetadas |
 |---|---|---|
-| `DimDeputado` | dimensão | `id`, `nome`, `siglaPartido`, `siglaUf`, `idLegislatura`, `email`, `urlFoto` |
+| `DimDeputado` | dimensão | `id`, `nome`, `siglaPartido`, `siglaUf`, `idLegislatura`, `email` |
 | `DimPartido` | dimensão | `id`, `sigla`, `nome` |
 | `DimTema` | dimensão (gerada por IA — Etapa 4) | `idTema`, `nomeTema` (ex.: Saúde, Tributário, Energia, Tecnologia...) |
-| `FatoProposicao` | fato | `id`, `siglaTipo`, `codTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`, `uri`, `temaIA` (Etapa 4) — `descricaoTipo`/`descricaoSituacao`/`siglaOrgao`/`regime`/`despacho`/`urlInteiroTeor` ficam `NULL` por ora (pendência abaixo) |
-| `FatoVotacao` | fato | `id`, `data`, `dataHoraRegistro`, `siglaOrgao`, `descricao`, `aprovacao` |
+| `FatoProposicao` | fato | `id`, `siglaTipo`, `codTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`, `temaIA` (Etapa 4) |
+| `FatoVotacao` | fato | `id`, `data`, `dataHoraRegistro`, `siglaOrgao`, `descricao`, `aprovacao`, `idProposicao` (derivado, ver abaixo) |
 | `votos` | fato (grão deputado × votação) | `idVotacao`, `idDeputado`, `tipoVoto`, `dataRegistroVoto` |
 | `despesas` | fato (grão deputado × documento) | `idDeputado`, `ano`, `mes`, `tipoDespesa`, `dataDocumento`, `valorDocumento`, `valorLiquido`, `valorGlosa`, `nomeFornecedor`, `cnpjCpfFornecedor` |
 
+> **Critério de projeção**: além dos campos que só existem em endpoints de detalhe (pendências abaixo), removemos do modelo final qualquer campo que (a) ficaria permanentemente em branco, (b) é apenas um link de navegação (`uri`/`uriPartido`, reconstituível a partir do `id`) ou (c) é um link de imagem (`urlFoto`) — nenhum agrega valor analítico ao projeto.
+
+**Resolvida na Etapa 3**:
+- `votacoes.idProposicao` — não existe como campo direto, mas a própria *listagem* `/votacoes` traz `uriProposicaoObjeto` (link para a proposição); o id é derivado por regex sem nenhuma chamada extra (`transform_votacoes.py`). Fica `NULL` quando a votação não está associada a uma proposição específica (ex.: eleições de mesa diretora) — por isso `fato_votacoes.id_proposicao` não tem FK para `fato_proposicoes` (a proposição referenciada também pode estar fora da janela extraída).
+
 **Pendências documentadas (decisão: adiar para quando a Etapa 3 precisar de fato)**:
-- `proposicoes.descricaoTipo`/`statusProposicao.*` (situação atual da tramitação)/`urlInteiroTeor` — só existem no detalhe `/proposicoes/{id}` (~700 chamadas extras na janela de 7 dias), não na listagem usada na extração; confirmei que não há atalho via querystring (`campos=situacao` → 400, `codSituacao=` filtra mas não projeta campos). `fato_proposicoes` guarda essas colunas como `NULL`, a serem enriquecidas sob demanda no futuro (ex.: só para as proposições do relatório semanal).
+- `proposicoes.descricaoTipo`/`statusProposicao.*` (situação atual da tramitação)/`urlInteiroTeor` — só existem no detalhe `/proposicoes/{id}` (~700 chamadas extras na janela de 7 dias), não na listagem usada na extração; confirmei que não há atalho via querystring (`campos=situacao` → 400, `codSituacao=` filtra mas não projeta campos). Decisão: não reservar colunas `NULL` para isso — se um enriquecimento seletivo futuro for implementado, as colunas entram via migração junto com os dados.
 - `partidos.status`/`numeroEleitoral` — só existem no detalhe `/partidos/{id}` (26 chamadas extras), não na listagem.
 - `proposicoes.autor` (nome de quem propôs) — exige `/proposicoes/{id}/autores` (~692 chamadas extras na janela de 7 dias); guardamos `uriAutores` no bruto e resolvemos sob demanda, só para o recorte que entra no relatório.
-- `votacoes.idProposicao` — não existe como campo direto; precisa ser **derivado** de `efeitosRegistrados[].uriProposicao` (regra documentada no notebook, parsing fica para a Etapa 3).
 - `votacoes.orientacoesBancada` — sub-recurso `/votacoes/{id}/orientacoes` (~33 chamadas extras); fica como melhoria futura, não bloqueia o MVP.
 
 ## Requisitos

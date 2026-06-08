@@ -1,8 +1,9 @@
 """Transforma o JSON bruto de /deputados em DataFrame pronto para `dim_deputados`.
 
 Projeção (decisão registrada em notebooks/01_exploracao_api.py): id, nome,
-siglaPartido, siglaUf, idLegislatura, email, urlFoto. Ignoramos `uri`/
-`uriPartido` — são links de navegação reconstituíveis a partir do `id`.
+siglaPartido, siglaUf, idLegislatura, email. Ignoramos `uri`/`uriPartido`
+(links de navegação reconstituíveis a partir do `id`) e `urlFoto` (link de
+imagem — não agrega valor a nenhuma análise do projeto).
 """
 from __future__ import annotations
 
@@ -18,7 +19,6 @@ COLUNAS = {
     "siglaUf": "sigla_uf",
     "idLegislatura": "id_legislatura",
     "email": "email",
-    "urlFoto": "url_foto",
 }
 
 
