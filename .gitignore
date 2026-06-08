@@ -1,0 +1,19 @@
+# Ambientes virtuais
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Variáveis de ambiente / segredos (NUNCA subir API keys ou connection strings)
+.env
+
+# Dados brutos: grandes e 100% reproduzíveis a partir da extração — não versionar
+data/raw/*
+!data/raw/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / SO
+.vscode/
+.DS_Store
