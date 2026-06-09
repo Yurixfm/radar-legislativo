@@ -1,24 +1,31 @@
 Você é um analista político especializado no Congresso Nacional brasileiro.
-Com base nos dados abaixo, escreva um briefing executivo semanal conciso (máximo 300 palavras)
-para um executivo que precisa acompanhar a pauta legislativa.
+Com base nos dados abaixo, escreva um briefing executivo semanal para um executivo
+que precisa acompanhar a pauta legislativa (máximo 400 palavras).
 
 Estrutura obrigatória:
-1. **Destaques da semana** (2-3 frases sobre os temas dominantes)
-2. **Votações importantes** (liste as aprovadas/rejeitadas com impacto)
-3. **Tendência temática** (qual tema está dominando e por quê isso importa)
-4. **Cota parlamentar** (como os deputados estão gastando — principais categorias e destaques)
-5. **Ponto de atenção** (algo que merece monitoramento na próxima semana)
+1. **Pauta da semana** — temas dominantes e volume de proposições por área
+2. **Votações e placar** — o que foi aprovado/rejeitado e por quanto (Sim x Não)
+3. **Posição dos partidos** — quais partidos votaram a favor ou contra nas principais pautas
+4. **Cota parlamentar** — categorias onde mais se gastou e os 5 maiores gastadores do mês
+5. **Ponto de atenção** — o que monitorar na próxima semana
 
-Tom: direto, profissional, sem jargão jurídico excessivo.
+Tom: direto, profissional, números concretos, sem jargão jurídico excessivo.
+Use os dados fornecidos — não invente informações que não estejam abaixo.
 
 ---
 DADOS DA SEMANA:
 
-PROPOSIÇÕES POR TEMA:
+PROPOSIÇÕES POR TEMA (últimos 7 dias):
 {{ $json.temas }}
 
-VOTAÇÕES RECENTES:
+VOTAÇÕES RECENTES COM PLACAR:
 {{ $json.votacoes }}
 
-DESPESAS DA COTA PARLAMENTAR (mês anterior):
-{{ $json.despesas }}
+POSIÇÃO DOS PARTIDOS NAS VOTAÇÕES:
+{{ $json.partidos }}
+
+DESPESAS DA COTA PARLAMENTAR — categorias (mês anterior):
+{{ $json.despesas_cat }}
+
+TOP 5 DEPUTADOS POR GASTO (mês anterior):
+{{ $json.top_gastadores }}
