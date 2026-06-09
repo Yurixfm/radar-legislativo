@@ -33,16 +33,32 @@ ORDER BY v.data DESC
 LIMIT 15;
 
 
--- Nó 5: Deputados mais ativos (proposições apresentadas na semana)
+-- Nó 5: Despesas da cota parlamentar (mês anterior)
+-- Total gasto por tipo de despesa
+SELECT
+    de.tipo_despesa,
+    COUNT(*)                        AS qtd_documentos,
+    SUM(de.valor_liquido)           AS total_liquido,
+    ROUND(AVG(de.valor_liquido), 2) AS ticket_medio
+FROM fato_despesas de
+WHERE de.ano  = EXTRACT(YEAR  FROM NOW() - INTERVAL '1 month')
+  AND de.mes  = EXTRACT(MONTH FROM NOW() - INTERVAL '1 month')
+GROUP BY de.tipo_despesa
+ORDER BY total_liquido DESC
+LIMIT 8;
+
+
+-- Nó 5b: Top 5 deputados por gasto no mês anterior
 SELECT
     d.nome,
     d.sigla_partido,
     d.sigla_uf,
-    COUNT(*)  AS proposicoes_semana
+    SUM(de.valor_liquido)  AS total_gasto,
+    COUNT(*)               AS qtd_documentos
 FROM fato_despesas de
 JOIN dim_deputados d ON d.id = de.id_deputado
-WHERE de.ano = EXTRACT(YEAR FROM NOW())
-  AND de.mes = EXTRACT(MONTH FROM NOW()) - 1
+WHERE de.ano  = EXTRACT(YEAR  FROM NOW() - INTERVAL '1 month')
+  AND de.mes  = EXTRACT(MONTH FROM NOW() - INTERVAL '1 month')
 GROUP BY d.nome, d.sigla_partido, d.sigla_uf
-ORDER BY proposicoes_semana DESC
+ORDER BY total_gasto DESC
 LIMIT 5;

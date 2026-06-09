@@ -6,7 +6,8 @@ Estrutura obrigatória:
 1. **Destaques da semana** (2-3 frases sobre os temas dominantes)
 2. **Votações importantes** (liste as aprovadas/rejeitadas com impacto)
 3. **Tendência temática** (qual tema está dominando e por quê isso importa)
-4. **Ponto de atenção** (algo que merece monitoramento na próxima semana)
+4. **Cota parlamentar** (como os deputados estão gastando — principais categorias e destaques)
+5. **Ponto de atenção** (algo que merece monitoramento na próxima semana)
 
 Tom: direto, profissional, sem jargão jurídico excessivo.
 
@@ -18,3 +19,6 @@ PROPOSIÇÕES POR TEMA:
 
 VOTAÇÕES RECENTES:
 {{ $json.votacoes }}
+
+DESPESAS DA COTA PARLAMENTAR (mês anterior):
+{{ $json.despesas }}
