@@ -20,121 +20,239 @@ esse processo manual por um fluxo automatizado: **extrai → valida → organiza
 Fonte dos dados: [API de Dados Abertos da Câmara dos Deputados](https://dadosabertos.camara.leg.br/swagger/api.html)
 (pública, gratuita, atualizada diariamente).
 
+---
+
 ## Status do projeto
 
-- [x] **Etapa 1 — Exploração da API**: mapeamento dos endpoints, formatos de
-  resposta e decisões de quais campos usar (ver [`notebooks/01_exploracao_api.py`](notebooks/01_exploracao_api.py)).
-- [x] **Etapa 2 — Extração com Python**: scripts que paginam, tratam erros e
-  salvam o JSON bruto em disco (ver seção [Como rodar a extração](#como-rodar-a-extração-etapa-2)).
-- [ ] Etapa 3 — Transformação com Pandas e carga no PostgreSQL
-- [ ] Etapa 4 — Camada de IA (classificação temática / resumo executivo)
-- [ ] Etapa 5 — Automação com n8n e apresentação executiva
+- [x] **Etapa 1 — Exploração da API**: mapeamento dos endpoints, formatos e campos úteis
+- [x] **Etapa 2 — Extração com Python**: paginação, retry/backoff e persistência em JSON bruto
+- [x] **Etapa 3 — Transformação e carga no PostgreSQL**: modelo dimensional no Supabase, carga incremental idempotente
+- [x] **Etapa 4 — Camada de IA**: classificação temática por embeddings (OpenAI text-embedding-3-small)
+- [x] **Etapa 5 — Automação com n8n**: briefing semanal gerado automaticamente e entregue por email
 
-## Arquitetura da extração (Etapas 1 e 2)
+---
+
+## Arquitetura geral
+
+```
+API Câmara (pública)
+      │
+      ▼
+┌─────────────────────────────────────────────────────┐
+│  Etapa 2 — Extração                                 │
+│  src/extract/  →  data/raw/<entidade>/*.json        │
+└──────────────────────┬──────────────────────────────┘
+                       │ JSON bruto completo
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│  Etapa 3 — Transformação                            │
+│  src/transform/  →  Supabase (PostgreSQL)           │
+│  7 tabelas: dim_* (3) + fato_* (4)                  │
+└──────────────────────┬──────────────────────────────┘
+                       │ banco populado
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│  Etapa 4 — IA                                       │
+│  src/ai/  →  embeddings + cosine similarity         │
+│  classifica proposições em 10 temas                 │
+└──────────────────────┬──────────────────────────────┘
+                       │ fato_proposicoes.tema_ia preenchido
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│  Etapa 5 — Automação (n8n Cloud)                    │
+│  5 queries SQL → Python (contexto) → OpenAI (texto) │
+│  → email HTML com análise + tabelas de dados reais  │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## Etapas 1 e 2 — Exploração e Extração
+
+### Estrutura
 
 ```
 src/
 ├── camara_api/
-│   ├── client.py     # GET com retry/backoff + paginação genérica (segue o link "next")
-│   └── config.py     # legislatura atual, janelas de data incrementais
+│   ├── client.py          # GET com retry/backoff + paginação via link "next"
+│   └── config.py          # legislatura atual, janelas de data incrementais
 └── extract/
-    ├── raw_storage.py        # salva o JSON bruto em data/raw/<entidade>/ antes de transformar
-    ├── extract_deputados.py  # GET /deputados            → dimensão deputados
-    ├── extract_partidos.py   # GET /partidos             → dimensão partidos
-    ├── extract_proposicoes.py# GET /proposicoes          → fato proposicoes
-    ├── extract_votacoes.py   # GET /votacoes (+ /votos)  → fatos votacoes e votos
-    ├── extract_despesas.py   # GET /deputados/{id}/despesas → fato despesas
-    └── run_extraction.py     # orquestra as 5 extrações numa única chamada (CLI)
+    ├── raw_storage.py         # persiste JSON bruto em data/raw/<entidade>/
+    ├── extract_deputados.py   # GET /deputados
+    ├── extract_partidos.py    # GET /partidos
+    ├── extract_proposicoes.py # GET /proposicoes (janela 7 dias)
+    ├── extract_votacoes.py    # GET /votacoes + /votacoes/{id}/votos
+    ├── extract_despesas.py    # GET /deputados/{id}/despesas (mês anterior)
+    └── run_extraction.py      # CLI que orquestra as 5 extrações
 
 notebooks/
-└── 01_exploracao_api.py  # exploração da API em formato notebook (células `# %%`)
+└── 01_exploracao_api.py   # exploração dos endpoints (formato notebook %%cells)
 ```
 
-### Decisões de engenharia (Etapa 1 → 2)
-
-- **Paginação via link `next`, não contagem manual de páginas.** A API
-  devolve `payload["links"]` com `rel: next`; o cliente (`get_all_pages`)
-  segue esse link num `while` até ele desaparecer — cada página tem até 100
-  itens (`itens=100`).
-- **`/votacoes/{id}/votos` não pagina.** Esse sub-recurso rejeita
-  `itens`/`pagina` (HTTP 400) e devolve a lista completa de uma vez — por
-  isso usa uma chamada simples (`get_json`), sem o laço de paginação.
-- **Janelas curtas e incrementais, não o histórico inteiro.** `/proposicoes`
-  e `/votacoes` sempre são filtradas por data (padrão: últimos 7 dias).
-  Sem esse filtro, `/proposicoes` sozinho devolve centenas de milhares de
-  registros — o erro clássico de "baixar a API inteira de uma vez".
-- **`/deputados/{id}/despesas` é uma chamada por deputado.** Para não
-  multiplicar ~513 × N páginas logo de cara, a extração aceita
-  `limite_deputados` (padrão: 10) — meça volume/tempo numa amostra antes de
-  ampliar.
-- **Erros transitórios (timeout, conexão, 5xx) são retentados com backoff
-  progressivo; erros 4xx não são** — repetir uma requisição malformada não
-  muda o resultado.
-- **JSON bruto salvo antes de qualquer transformação**, em
-  `data/raw/<entidade>/`. Se o `transform` (Etapa 3) quebrar, a extração não
-  precisa rodar de novo.
-
-## Como rodar a extração (Etapa 2)
+### Como rodar
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# roda as 5 extrações com os parâmetros padrão (últimos 7 dias, 10 deputados nas despesas)
+# extração padrão: últimos 7 dias, 10 deputados nas despesas
 python -m src.extract.run_extraction
 
-# exemplos de uso incremental/controlado
-python -m src.extract.run_extraction --dias 30 --despesas-limite 20
-python -m src.extract.run_extraction --pular-votos --pular-despesas   # só deputados/partidos/proposições/votações
+# ajustes
+python -m src.extract.run_extraction --dias 30 --despesas-limite 50
+python -m src.extract.run_extraction --pular-votos --pular-despesas
 ```
 
-Cada execução grava o JSON bruto em `data/raw/<entidade>/` (pasta ignorada
-pelo Git — é volumosa e 100% reprodutível a partir da extração). Também é
-possível rodar cada extração isoladamente, ex.: `python -m src.extract.extract_proposicoes`.
+### Decisões de engenharia
 
-## Modelo de dados (mapa de projeção para a Etapa 3)
+- **Paginação via link `next`** — segue `payload["links"][rel=next]` num `while`, 100 itens por página.
+- **`/votacoes/{id}/votos` não pagina** — rejeita `itens`/`pagina` com 400; usa chamada simples.
+- **Janelas incrementais** — `/proposicoes` e `/votacoes` sempre filtradas por data (padrão: 7 dias). Sem filtro retornariam centenas de milhares de registros.
+- **JSON bruto antes de transformar** — `data/raw/` salvo antes de qualquer processamento; se o transform quebrar, não reextrai.
+- **Retry só em 5xx/timeout** — erros 4xx não são retentados (requisição malformada não muda).
 
-A extração salva o JSON **bruto e completo**; a tabela abaixo é o contrato
-que a transformação (Etapa 3) vai seguir para projetar cada entidade nas
-tabelas do PostgreSQL — ela está detalhada, endpoint a endpoint, com
-exemplos reais e pendências identificadas, em
-[`notebooks/01_exploracao_api.py`](notebooks/01_exploracao_api.py#L153) (seção
-"Mapa de projeção oficial para a Etapa 3").
+---
 
-| Tabela | Tipo | Colunas projetadas |
+## Etapa 3 — Transformação e Carga
+
+### Modelo dimensional
+
+| Tabela | Tipo | Principais colunas |
 |---|---|---|
-| `DimDeputado` | dimensão | `id`, `nome`, `siglaPartido`, `siglaUf`, `idLegislatura`, `email` |
-| `DimPartido` | dimensão | `id`, `sigla`, `nome` |
-| `DimTema` | dimensão (gerada por IA — Etapa 4) | `idTema`, `nomeTema` (ex.: Saúde, Tributário, Energia, Tecnologia...) |
-| `FatoProposicao` | fato | `id`, `siglaTipo`, `codTipo`, `numero`, `ano`, `ementa`, `dataApresentacao`, `temaIA` (Etapa 4) |
-| `FatoVotacao` | fato | `id`, `data`, `dataHoraRegistro`, `siglaOrgao`, `descricao`, `aprovacao`, `idProposicao` (derivado, ver abaixo) |
-| `fato_votos` | fato (grão deputado × votação) | `idVotacao`, `idDeputado`, `tipoVoto`, `dataRegistroVoto` |
-| `fato_despesas` | fato (grão deputado × documento) | `idDeputado`, `ano`, `mes`, `tipoDespesa`, `dataDocumento`, `valorDocumento`, `valorLiquido`, `valorGlosa`, `nomeFornecedor`, `cnpjCpfFornecedor` |
+| `dim_partidos` | dimensão | `id`, `sigla`, `nome` |
+| `dim_deputados` | dimensão | `id`, `nome`, `sigla_partido`, `sigla_uf`, `id_legislatura`, `email` |
+| `dim_temas` | dimensão (IA) | `id_tema`, `nome_tema` |
+| `fato_proposicoes` | fato | `id`, `sigla_tipo`, `numero`, `ano`, `ementa`, `data_apresentacao`, `id_tema`, `tema_ia` |
+| `fato_votacoes` | fato | `id`, `data`, `descricao`, `aprovacao`, `id_proposicao` |
+| `fato_votos` | fato (deputado × votação) | `id_votacao`, `id_deputado`, `tipo_voto` |
+| `fato_despesas` | fato (deputado × documento) | `id_deputado`, `ano`, `mes`, `tipo_despesa`, `valor_liquido`, `nome_fornecedor` |
 
-> Nota de nomenclatura: `votos`/`despesas` entraram como diferenciais do
-> projeto e não tinham nome formal `FatoX` no mapa de projeção original — por
-> isso, ao perceber a inconsistência, renomeei as tabelas físicas para
-> `fato_votos`/`fato_despesas`, deixando o prefixo `fato_`/`dim_` consistente
-> em todo o modelo (toda tabela de grão fino — 1 linha por evento/transação —
-> é uma tabela fato, independente de ter entrado no "core" do modelo ou como
-> extra). A migração (`ALTER TABLE ... RENAME`) preserva os dados já
-> carregados no Supabase.
+### Estrutura
 
-> **Critério de projeção**: além dos campos que só existem em endpoints de detalhe (pendências abaixo), removemos do modelo final qualquer campo que (a) ficaria permanentemente em branco, (b) é apenas um link de navegação (`uri`/`uriPartido`, reconstituível a partir do `id`) ou (c) é um link de imagem (`urlFoto`) — nenhum agrega valor analítico ao projeto.
+```
+src/transform/
+├── schema.sql               # DDL idempotente (IF NOT EXISTS + migrações no topo)
+├── db.py                    # get_engine() via SQLAlchemy + psycopg2
+├── load.py                  # carregar_incremental() — só insere PKs novas
+├── transform_deputados.py
+├── transform_partidos.py
+├── transform_proposicoes.py # adiciona id_tema, tema_ia como NULL (preenchidos na Etapa 4)
+├── transform_votacoes.py    # deriva id_proposicao via regex no uriProposicaoObjeto
+├── transform_votacoes_votos.py
+├── transform_despesas.py
+└── run_transform.py         # CLI que executa todos os passos em sequência
+```
 
-**Resolvida na Etapa 3**:
-- `votacoes.idProposicao` — não existe como campo direto, mas a própria *listagem* `/votacoes` traz `uriProposicaoObjeto` (link para a proposição); o id é derivado por regex sem nenhuma chamada extra (`transform_votacoes.py`). Fica `NULL` quando a votação não está associada a uma proposição específica (ex.: eleições de mesa diretora) — por isso `fato_votacoes.id_proposicao` não tem FK para `fato_proposicoes` (a proposição referenciada também pode estar fora da janela extraída).
+### Como rodar
 
-**Pendências documentadas (decisão: adiar para quando a Etapa 3 precisar de fato)**:
-- `proposicoes.descricaoTipo`/`statusProposicao.*` (situação atual da tramitação)/`urlInteiroTeor` — só existem no detalhe `/proposicoes/{id}` (~700 chamadas extras na janela de 7 dias), não na listagem usada na extração; confirmei que não há atalho via querystring (`campos=situacao` → 400, `codSituacao=` filtra mas não projeta campos). Decisão: não reservar colunas `NULL` para isso — se um enriquecimento seletivo futuro for implementado, as colunas entram via migração junto com os dados.
-- `partidos.status`/`numeroEleitoral` — só existem no detalhe `/partidos/{id}` (26 chamadas extras), não na listagem.
-- `proposicoes.autor` (nome de quem propôs) — exige `/proposicoes/{id}/autores` (~692 chamadas extras na janela de 7 dias); guardamos `uriAutores` no bruto e resolvemos sob demanda, só para o recorte que entra no relatório.
-- `votacoes.orientacoesBancada` — sub-recurso `/votacoes/{id}/orientacoes` (~33 chamadas extras); fica como melhoria futura, não bloqueia o MVP.
+```bash
+# cria/atualiza o schema no Supabase e carrega todos os dados extraídos
+python -m src.transform.run_transform
+```
 
-## Requisitos
+Requer `.env` com `DATABASE_URL` (pooler do Supabase — porta 6543).
+
+---
+
+## Etapa 4 — Camada de IA
+
+Classifica cada proposição em um de 10 temas usando embeddings semânticos:
+`Saúde`, `Tributário`, `Trabalho`, `Tecnologia`, `Meio Ambiente`,
+`Segurança Pública`, `Educação`, `Infraestrutura`, `Direitos Humanos`, `Administrativo`.
+
+### Como funciona
+
+1. Gera embeddings dos 10 temas com `text-embedding-3-small` (OpenAI)
+2. Gera embedding de cada ementa de proposição
+3. Atribui o tema com maior similaridade de cosseno
+4. Salva `id_tema` e `tema_ia` em `fato_proposicoes`
+
+### Estrutura
+
+```
+src/ai/
+├── themes.py       # dicionário {nome_tema: descrição semântica}
+├── embeddings.py   # get_embeddings_batch() + estimate_cost()
+├── classify.py     # cosine_sim() + classify()
+└── run_classify.py # CLI com modo teste (10 props, sem salvar) e --confirmar (tudo)
+```
+
+### Como rodar
+
+```bash
+# modo teste: classifica 10 proposições e estima custo do lote completo
+python -m src.ai.run_classify
+
+# classifica todas as proposições sem tema e salva no banco
+python -m src.ai.run_classify --confirmar
+```
+
+Requer `OPENAI_API_KEY` no `.env`. Custo típico para ~700 proposições: < U$ 0,01.
+
+---
+
+## Etapa 5 — Automação com n8n
+
+Workflow semanal no **n8n Cloud** que gera e envia o briefing automaticamente.
+
+### Arquitetura do workflow
+
+```
+Trigger semanal
+  ├── Nó A: Proposições por tema (últimos 7 dias)    ──┐
+  ├── Nó B: Votações com placar                      ──┤
+  ├── Nó C: Posição dos partidos                     ──┼──► Merge (Append) ──► Montar Contexto ──► OpenAI ──► Email
+  ├── Nó D: Despesas por categoria (mês anterior)    ──┤
+  └── Nó E: Top 5 deputados por gasto                ──┘
+```
+
+- **Merge (Append, 5 inputs)** — combina os resultados das 5 queries num único `_items`
+- **Montar Contexto (Python)** — discrimina os datasets por campo, gera texto para o prompt e tabelas HTML para o email
+- **OpenAI** — gera análise narrativa (máx. 400 palavras) com estrutura obrigatória
+- **Email** — análise da IA + 5 tabelas com dados reais diretamente do banco
+
+### Arquivos
+
+```
+n8n/
+├── queries.sql                  # 5 queries — cole em cada nó Postgres
+├── prompt_resumo_executivo.txt  # prompt do nó OpenAI
+└── email_template.html          # template HTML do corpo do email
+```
+
+### Seções do briefing gerado
+
+1. **Pauta da semana** — temas dominantes e volume de proposições
+2. **Votações e placar** — aprovadas/rejeitadas com contagem Sim × Não
+3. **Posição dos partidos** — % favorável, votos Sim/Não/Abstenção por partido
+4. **Cota parlamentar** — categorias de maior gasto + top 5 deputados do mês
+5. **Ponto de atenção** — o que monitorar na próxima semana
+
+---
+
+## Configuração do ambiente
+
+### Variáveis de ambiente (`.env`)
+
+```env
+DATABASE_URL=postgresql://postgres.<projeto>:<senha>@aws-1-us-west-2.pooler.supabase.com:6543/postgres
+OPENAI_API_KEY=sk-...
+```
+
+Copie `.env.example` como ponto de partida. O `.env` é ignorado pelo Git.
+
+### Requisitos
+
+```bash
+pip install -r requirements.txt
+```
 
 - Python 3.11+
-- Dependências em [`requirements.txt`](requirements.txt) (cresce conforme as próximas etapas — Pandas/SQLAlchemy/OpenAI entram nas Etapas 3 e 4)
+- SQLAlchemy + psycopg2-binary (Supabase)
+- openai (embeddings — Etapa 4)
+- pandas, python-dotenv, requests
+
+---
 
 ## Repositório
 
