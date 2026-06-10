@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.camara_api.client import get_all_pages
-from src.camara_api.config import janela_dias
+from src.camara_api.config import dividir_em_janelas, janela_dias
 from src.extract.raw_storage import save_raw_json
 
 
@@ -18,26 +18,30 @@ def extrair_proposicoes(dias: int = 7, data_inicio: str | None = None, data_fim:
     """Busca proposições apresentadas entre `data_inicio` e `data_fim`.
 
     Por padrão usa os últimos `dias` dias (7 — comece pequeno e amplie depois
-    que o pipeline estiver estável, como recomenda o desafio).
+    que o pipeline estiver estável, como recomenda o desafio). Janelas com
+    mais de 3 meses são divididas automaticamente — a API rejeita (HTTP 400)
+    intervalos maiores que isso.
     """
     if not (data_inicio and data_fim):
         data_inicio, data_fim = janela_dias(dias)
 
-    registros = get_all_pages(
-        "/proposicoes",
-        params={
-            "dataApresentacaoInicio": data_inicio,
-            "dataApresentacaoFim": data_fim,
-            "ordem": "ASC",
-            "ordenarPor": "id",
-        },
-    )
-
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    caminho = save_raw_json("proposicoes", f"{data_inicio}_a_{data_fim}_{timestamp}", registros)
-    print(f"[proposicoes] {len(registros)} registros ({data_inicio} a {data_fim}) salvos em {caminho}")
+    todos_registros = []
+    for inicio, fim in dividir_em_janelas(data_inicio, data_fim):
+        registros = get_all_pages(
+            "/proposicoes",
+            params={
+                "dataApresentacaoInicio": inicio,
+                "dataApresentacaoFim": fim,
+                "ordem": "ASC",
+                "ordenarPor": "id",
+            },
+        )
+        caminho = save_raw_json("proposicoes", f"{inicio}_a_{fim}_{timestamp}", registros)
+        print(f"[proposicoes] {len(registros)} registros ({inicio} a {fim}) salvos em {caminho}")
+        todos_registros.extend(registros)
 
-    return registros
+    return todos_registros
 
 
 if __name__ == "__main__":

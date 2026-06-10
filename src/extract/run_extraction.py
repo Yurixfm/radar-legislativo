@@ -12,6 +12,7 @@ timeout nas despesas) não derruba a extração inteira.
 from __future__ import annotations
 
 import argparse
+from datetime import date
 
 from src.camara_api.client import CamaraAPIError
 from src.extract.extract_deputados import extrair_deputados
@@ -25,8 +26,10 @@ def main():
     parser = argparse.ArgumentParser(description="Extração incremental — API de Dados Abertos da Câmara dos Deputados")
     parser.add_argument("--dias", type=int, default=7, help="Janela de dias para proposições/votações (padrão: 7)")
     parser.add_argument("--despesas-limite", type=int, default=10, help="Nº de deputados a considerar nas despesas, para controlar volume/custo (padrão: 10)")
+    parser.add_argument("--pular-proposicoes", action="store_true", help="Pula a extração de proposições")
     parser.add_argument("--pular-votos", action="store_true", help="Pula a busca de votos individuais por votação")
     parser.add_argument("--pular-despesas", action="store_true", help="Pula a extração de despesas")
+    parser.add_argument("--despesas-ano-todo", action="store_true", help="Busca despesas de todos os meses já fechados do ano corrente (backfill), em vez de só o mês anterior")
     args = parser.parse_args()
 
     deputados = []
@@ -43,11 +46,14 @@ def main():
     except CamaraAPIError as exc:
         print(f"  [erro] extração de partidos falhou: {exc}")
 
-    print(f"== [3/5] proposições (últimos {args.dias} dias) ==")
-    try:
-        extrair_proposicoes(dias=args.dias)
-    except CamaraAPIError as exc:
-        print(f"  [erro] extração de proposições falhou: {exc}")
+    if not args.pular_proposicoes:
+        print(f"== [3/5] proposições (últimos {args.dias} dias) ==")
+        try:
+            extrair_proposicoes(dias=args.dias)
+        except CamaraAPIError as exc:
+            print(f"  [erro] extração de proposições falhou: {exc}")
+    else:
+        print("== [3/5] proposições — pulado (--pular-proposicoes) ==")
 
     print(f"== [4/5] votações + votos (últimos {args.dias} dias) ==")
     try:
@@ -56,12 +62,20 @@ def main():
         print(f"  [erro] extração de votações falhou: {exc}")
 
     if not args.pular_despesas:
-        ano, mes = mes_anterior()
-        print(f"== [5/5] despesas ({mes:02d}/{ano} — mês fechado anterior, {args.despesas_limite} deputados) ==")
-        try:
-            extrair_despesas(ano=ano, mes=mes, limite_deputados=args.despesas_limite, deputados=deputados or None)
-        except CamaraAPIError as exc:
-            print(f"  [erro] extração de despesas falhou: {exc}")
+        if args.despesas_ano_todo:
+            ano = date.today().year
+            print(f"== [5/5] despesas (todos os meses fechados de {ano} — {args.despesas_limite} deputados) ==")
+            try:
+                extrair_despesas(ano=ano, mes=None, limite_deputados=args.despesas_limite, deputados=deputados or None)
+            except CamaraAPIError as exc:
+                print(f"  [erro] extração de despesas falhou: {exc}")
+        else:
+            ano, mes = mes_anterior()
+            print(f"== [5/5] despesas ({mes:02d}/{ano} — mês fechado anterior, {args.despesas_limite} deputados) ==")
+            try:
+                extrair_despesas(ano=ano, mes=mes, limite_deputados=args.despesas_limite, deputados=deputados or None)
+            except CamaraAPIError as exc:
+                print(f"  [erro] extração de despesas falhou: {exc}")
     else:
         print("== [5/5] despesas — pulado (--pular-despesas) ==")
 

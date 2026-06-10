@@ -67,6 +67,29 @@ API Câmara (pública)
 
 ---
 
+## Pipeline completo (extração + carga + IA)
+
+`src/run_pipeline.py` orquestra as Etapas 2, 3 e 4 numa única chamada — extração,
+transformação/carga incremental no Supabase e classificação IA das novas
+proposições:
+
+```bash
+# carga inicial: últimos 90 dias (limite máximo da API por consulta)
+python -m src.run_pipeline --backfill
+
+# incremental: últimos 7 dias (padrão) — uso recorrente/agendado
+python -m src.run_pipeline
+
+# janela incremental customizada
+python -m src.run_pipeline --dias 14
+```
+
+A classificação roda em modo completo (`--confirmar`) ao final de ambos os
+modos — o custo é proporcional ao nº de proposições novas (~U$0,02 a cada
+~20 mil proposições).
+
+---
+
 ## Etapas 1 e 2 — Exploração e Extração
 
 ### Estrutura
@@ -254,6 +277,12 @@ pip install -r requirements.txt
 
 ---
 
-## Repositório
+## Repositório e infraestrutura
 
-https://github.com/Yurixfm/radar-legislativo
+| Recurso | URL |
+|---|---|
+| Código-fonte | https://github.com/Yurixfm/radar-legislativo |
+| Banco de dados (Supabase) | https://supabase.com/dashboard/project/wszwoboaysikoiddpmks |
+| API pública do projeto | https://wszwoboaysikoiddpmks.supabase.co |
+
+> O banco requer autenticação para acesso direto. Para avaliação, solicite acesso via convite no Supabase (Settings → Members) ou use as credenciais fornecidas separadamente.

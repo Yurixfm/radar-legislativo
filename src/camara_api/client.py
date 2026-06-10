@@ -33,27 +33,30 @@ def _resolve_url(endpoint: str) -> str:
     return endpoint if endpoint.startswith("http") else f"{BASE_URL}{endpoint}"
 
 
-def _request_with_retry(url, params=None, max_retries=3, backoff_seconds=1.5):
+def _request_with_retry(url, params=None, max_retries=4, backoff_seconds=1.5):
     """Faz GET com retentativa para erros transitórios (timeout/conexão/5xx).
 
     Erros 4xx (ex.: parâmetro inválido) são propagados imediatamente, pois
     indicam um problema na requisição em si, não algo que vá se resolver
-    tentando de novo.
+    tentando de novo. Erros 5xx (ex.: 502/503/504 — instabilidade momentânea
+    do servidor da Câmara, comum em consultas longas) são retentados com
+    backoff progressivo.
     """
     last_exc = None
     for attempt in range(1, max_retries + 1):
         try:
             response = requests.get(url, params=params, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
-            if response.status_code >= 500:
-                raise requests.HTTPError(f"HTTP {response.status_code} em {response.url}")
             response.raise_for_status()
             return response.json()
-        except requests.HTTPError:
-            raise
+        except requests.HTTPError as exc:
+            if exc.response.status_code < 500:
+                raise
+            last_exc = exc
         except (requests.Timeout, requests.ConnectionError) as exc:
             last_exc = exc
-            if attempt < max_retries:
-                time.sleep(backoff_seconds * attempt)
+
+        if attempt < max_retries:
+            time.sleep(backoff_seconds * attempt)
 
     raise CamaraAPIError(f"Falha ao consultar {url} após {max_retries} tentativas: {last_exc}") from last_exc
 
