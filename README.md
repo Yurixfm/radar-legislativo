@@ -28,30 +28,37 @@ Fonte dos dados: [API de Dados Abertos da Câmara dos Deputados](https://dadosab
 - [x] **Etapa 2 — Extração com Python**: paginação, retry/backoff e persistência em JSON bruto
 - [x] **Etapa 3 — Transformação e carga no PostgreSQL**: modelo dimensional no Supabase, carga incremental idempotente
 - [x] **Etapa 4 — Camada de IA**: classificação temática por embeddings (OpenAI text-embedding-3-small)
-- [x] **Etapa 5 — Automação com n8n**: briefing semanal gerado automaticamente e entregue por email
+- [x] **Etapa 5 — Orquestração**: n8n aciona o pipeline de dados (GitHub Actions) antes de montar o briefing
+- [x] **Etapa 6 — Automação com n8n**: briefing semanal gerado automaticamente e entregue por email
 
 ---
 
 ## Arquitetura geral
 
 ```
-API Câmara (pública)
-      │
-      ▼
 ┌─────────────────────────────────────────────────────┐
-│  Etapa 2 — Extração                                 │
-│  src/extract/  →  data/raw/<entidade>/*.json        │
+│  Etapa 5 — n8n Cloud (Schedule Trigger)             │
+│  1. dispara workflow_dispatch no GitHub Actions     │
+│  2. aguarda (Wait) o pipeline terminar              │
 └──────────────────────┬──────────────────────────────┘
-                       │ JSON bruto completo
+                       │ aciona via API do GitHub
                        ▼
 ┌─────────────────────────────────────────────────────┐
+│  GitHub Actions — pipeline_semanal.yml              │
+│  roda `python -m src.run_pipeline` (Etapas 2 a 4)   │
+│                                                       │
+│  API Câmara (pública)                               │
+│        │                                            │
+│        ▼                                            │
+│  Etapa 2 — Extração                                 │
+│  src/extract/  →  data/raw/<entidade>/*.json        │
+│        │ JSON bruto completo                        │
+│        ▼                                            │
 │  Etapa 3 — Transformação                            │
 │  src/transform/  →  Supabase (PostgreSQL)           │
 │  7 tabelas: dim_* (3) + fato_* (4)                  │
-└──────────────────────┬──────────────────────────────┘
-                       │ banco populado
-                       ▼
-┌─────────────────────────────────────────────────────┐
+│        │ banco populado                             │
+│        ▼                                            │
 │  Etapa 4 — IA                                       │
 │  src/ai/  →  embeddings + cosine similarity         │
 │  classifica proposições em 10 temas                 │
@@ -59,7 +66,8 @@ API Câmara (pública)
                        │ fato_proposicoes.tema_ia preenchido
                        ▼
 ┌─────────────────────────────────────────────────────┐
-│  Etapa 5 — Automação (n8n Cloud)                    │
+│  Etapa 6 — Automação (n8n Cloud)                    │
+│  continuação do mesmo workflow da Etapa 5:          │
 │  5 queries SQL → Python (contexto) → OpenAI (texto) │
 │  → email HTML com análise + tabelas de dados reais  │
 └─────────────────────────────────────────────────────┘
@@ -214,7 +222,76 @@ Requer `OPENAI_API_KEY` no `.env`. Custo típico para ~700 proposições: < U$ 0
 
 ---
 
-## Etapa 5 — Automação com n8n
+## Etapa 5 — Orquestração (n8n aciona o pipeline via GitHub Actions)
+
+O workflow do n8n (Etapa 6) só consulta o Supabase — ele não roda Python nem
+acessa a API da Câmara diretamente. Para que o briefing semanal sempre
+reflita dados atualizados, o **mesmo workflow do n8n** primeiro aciona o
+pipeline completo (`src/run_pipeline.py`) via GitHub Actions e só então
+segue para as 5 queries SQL.
+
+### Arquivo
+
+```
+.github/workflows/pipeline_semanal.yml   # workflow_dispatch -> roda src/run_pipeline.py
+```
+
+### Configuração (passo a passo)
+
+**1. Secrets do repositório (GitHub)**
+
+Em `Settings → Secrets and variables → Actions → New repository secret`,
+cadastre:
+
+- `DATABASE_URL` — mesma string de conexão do `.env` (pooler do Supabase)
+- `OPENAI_API_KEY` — mesma chave do `.env`
+
+**2. Personal Access Token para o n8n**
+
+Em `github.com/settings/tokens` (fine-grained token), gere um token com:
+
+- Repository access: apenas `radar-legislativo`
+- Permissions: `Actions` → Read and write
+
+Esse token é usado pelo n8n para chamar a API do GitHub. Guarde-o como
+credencial no n8n (Header Auth) — nunca em texto plano no workflow.
+
+**3. Nós novos no início do workflow do n8n**
+
+Inserir entre o **Trigger semanal** e os 5 nós Postgres existentes (Etapa 6):
+
+```
+Trigger semanal
+   │
+   ▼
+HTTP Request (POST .../dispatches)
+   │
+   ▼
+Wait (~10-15 min)
+   │
+   ▼
+[5 nós Postgres existentes] → Merge → ... (Etapa 6)
+```
+
+- **HTTP Request**:
+  - Method: `POST`
+  - URL: `https://api.github.com/repos/Yurixfm/radar-legislativo/actions/workflows/pipeline_semanal.yml/dispatches`
+  - Authentication: Header Auth (`Authorization: Bearer <PAT>`)
+  - Headers extras: `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`
+  - Body (JSON): `{ "ref": "main" }`
+
+- **Wait**: a API de dispatch não retorna o status da execução, então o nó
+  Wait dá tempo do pipeline terminar antes das queries rodarem (uma extração
+  incremental de 7 dias normalmente leva poucos minutos).
+
+### Rodar manualmente (sem n8n)
+
+A action também pode ser disparada manualmente pela aba **Actions** do
+GitHub (botão "Run workflow") — útil para testar sem esperar o agendamento.
+
+---
+
+## Etapa 6 — Automação com n8n
 
 Workflow semanal no **n8n Cloud** que gera e envia o briefing automaticamente.
 
