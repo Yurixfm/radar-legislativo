@@ -448,4 +448,15 @@ pip install -r requirements.txt
 | Banco de dados (Supabase) | https://supabase.com/dashboard/project/wszwoboaysikoiddpmks |
 | API pública do projeto | https://wszwoboaysikoiddpmks.supabase.co |
 
-> O banco requer autenticação para acesso direto. Para avaliação, solicite acesso via convite no Supabase (Settings → Members) ou use as credenciais fornecidas separadamente.
+### Acesso de leitura ao banco
+
+Acesso somente leitura via usuário dedicado `avaliador` (permissão `SELECT` em
+todas as tabelas, sem escrita):
+
+```
+postgresql://avaliador.wszwoboaysikoiddpmks:123abc@aws-1-us-west-2.pooler.supabase.com:6543/postgres
+```
+
+Conecte com qualquer cliente Postgres (psql, DBeaver, pgAdmin, etc.) para
+navegar pelas tabelas `dim_partidos`, `dim_deputados`, `dim_temas`,
+`fato_proposicoes`, `fato_votacoes`, `fato_votos` e `fato_despesas`.
