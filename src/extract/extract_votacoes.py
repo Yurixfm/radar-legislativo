@@ -5,18 +5,34 @@ Endpoints:
 - GET /votacoes/{id}/votos (sub-recurso SEM paginação — ver `client.get_json`)
 
 Para cada votação na janela, buscamos também a lista de votos individuais por
-deputado. Isso multiplica o número de chamadas (1 + N por janela), então
-mantemos a janela curta e um intervalo entre chamadas para não sobrecarregar
-a API.
+deputado. Isso multiplica o número de chamadas (1 + N por janela); como são
+GETs independentes (um por votação), buscamos os votos em paralelo
+(`ThreadPoolExecutor`) para não deixar a janela toda escalonada de forma
+sequencial.
 """
 from __future__ import annotations
 
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from src.camara_api.client import CamaraAPIError, get_all_pages, get_json
 from src.camara_api.config import dividir_em_janelas, janela_dias
 from src.extract.raw_storage import save_raw_json
+
+MAX_WORKERS = 8
+
+
+def _buscar_votos_votacao(votacao_id) -> list[dict]:
+    try:
+        payload = get_json(f"/votacoes/{votacao_id}/votos")
+    except CamaraAPIError as exc:
+        print(f"  [aviso] não foi possível buscar votos da votação {votacao_id}: {exc}")
+        return []
+
+    votos = payload.get("dados", [])
+    for voto in votos:
+        voto["idVotacao"] = votacao_id
+    return votos
 
 
 def extrair_votacoes(
@@ -54,19 +70,10 @@ def extrair_votacoes(
             continue
 
         votos = []
-        for votacao in votacoes:
-            votacao_id = votacao["id"]
-            try:
-                payload = get_json(f"/votacoes/{votacao_id}/votos")
-            except CamaraAPIError as exc:
-                print(f"  [aviso] não foi possível buscar votos da votação {votacao_id}: {exc}")
-                continue
-
-            for voto in payload.get("dados", []):
-                voto["idVotacao"] = votacao_id
-                votos.append(voto)
-
-            time.sleep(0.3)
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futuros = [executor.submit(_buscar_votos_votacao, v["id"]) for v in votacoes]
+            for futuro in as_completed(futuros):
+                votos.extend(futuro.result())
 
         caminho_votos = save_raw_json("votos", f"{inicio}_a_{fim}_{timestamp}", votos)
         print(f"[votos] {len(votos)} votos individuais salvos em {caminho_votos}")

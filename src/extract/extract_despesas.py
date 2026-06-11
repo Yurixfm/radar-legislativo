@@ -8,15 +8,21 @@ sua própria sequência de páginas. Baixar tudo de uma vez no primeiro teste
 seria o erro clássico que o desafio pede para evitar — por isso a função
 recebe `limite_deputados` (comece com 10, meça o tempo/volume, só então
 amplie).
+
+As chamadas são feitas em paralelo (`ThreadPoolExecutor`) — são GETs
+independentes, um por deputado, sem nada a coordenar entre elas além de
+juntar os resultados no final.
 """
 from __future__ import annotations
 
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 
 from src.camara_api.client import CamaraAPIError, get_all_pages
 from src.extract.extract_deputados import extrair_deputados
 from src.extract.raw_storage import save_raw_json
+
+MAX_WORKERS = 8
 
 
 def mes_anterior(referencia: date | None = None) -> tuple[int, int]:
@@ -31,6 +37,18 @@ def mes_anterior(referencia: date | None = None) -> tuple[int, int]:
     if referencia.month == 1:
         return referencia.year - 1, 12
     return referencia.year, referencia.month - 1
+
+
+def _buscar_despesas_deputado(deputado_id: int, params: dict) -> list[dict]:
+    try:
+        registros = get_all_pages(f"/deputados/{deputado_id}/despesas", params=params)
+    except CamaraAPIError as exc:
+        print(f"  [aviso] falha ao buscar despesas do deputado {deputado_id}: {exc}")
+        return []
+
+    for registro in registros:
+        registro["idDeputado"] = deputado_id
+    return registros
 
 
 def extrair_despesas(ano: int, mes: int | None = None, limite_deputados: int | None = None, deputados=None):
@@ -49,19 +67,10 @@ def extrair_despesas(ano: int, mes: int | None = None, limite_deputados: int | N
         params["mes"] = mes
 
     despesas = []
-    for deputado in deputados:
-        deputado_id = deputado["id"]
-        try:
-            registros = get_all_pages(f"/deputados/{deputado_id}/despesas", params=params)
-        except CamaraAPIError as exc:
-            print(f"  [aviso] falha ao buscar despesas do deputado {deputado_id}: {exc}")
-            continue
-
-        for registro in registros:
-            registro["idDeputado"] = deputado_id
-            despesas.append(registro)
-
-        time.sleep(0.3)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futuros = [executor.submit(_buscar_despesas_deputado, d["id"], params) for d in deputados]
+        for futuro in as_completed(futuros):
+            despesas.extend(futuro.result())
 
     sufixo_mes = f"{mes:02d}" if mes else "todos-meses"
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
