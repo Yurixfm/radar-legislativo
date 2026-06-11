@@ -158,6 +158,21 @@ python -m src.extract.run_extraction --pular-votos --pular-despesas
 | `fato_votos` | fato (deputado × votação) | `id_votacao`, `id_deputado`, `tipo_voto` |
 | `fato_despesas` | fato (deputado × documento) | `id_deputado`, `ano`, `mes`, `tipo_despesa`, `valor_liquido`, `nome_fornecedor` |
 
+### Relacionamentos
+
+FKs declaradas no schema:
+
+- `fato_proposicoes.id_tema → dim_temas.id_tema` — preenchida na Etapa 4 (camada de IA).
+- `fato_votos.id_votacao → fato_votacoes.id` — toda votação extraída tem seus votos buscados na mesma janela (Etapa 2), então a integridade é garantida pelo próprio fluxo de extração.
+
+Relacionamentos **não** declarados como FK (decisão deliberada — ver "Decisões de modelagem" abaixo):
+
+- `fato_votos.id_deputado → dim_deputados.id`
+- `fato_despesas.id_deputado → dim_deputados.id`
+- `fato_votacoes.id_proposicao → fato_proposicoes.id`
+
+`dim_partidos` é carregada mas hoje não é referenciada por FK — `sigla_partido` é replicado como atributo de texto em `dim_deputados` (mantido como dimensão "pronta" para uma eventual normalização futura).
+
 ### Estrutura
 
 ```
@@ -182,6 +197,13 @@ python -m src.transform.run_transform
 ```
 
 Requer `.env` com `DATABASE_URL` (pooler do Supabase — porta 6543).
+
+### Decisões de modelagem
+
+- **FKs só onde a integridade é garantida pelo fluxo de extração** — `fato_votos.id_votacao` e `fato_proposicoes.id_tema` têm FK porque o pipeline sempre popula o lado "pai" antes (ou na mesma janela). Nos demais casos, exigir FK quebraria a carga incremental sempre que aparecesse um suplente, um deputado fora de exercício ou uma votação referente a uma proposição fora da janela — preferiu-se manter o dado (mesmo "órfão") a descartá-lo.
+- **Carga incremental por PK** — `carregar_incremental()` só insere linhas cuja chave primária ainda não existe; rodar o pipeline de novo sobre a mesma janela não duplica nada.
+- **Renomeação `votos`/`despesas` → `fato_votos`/`fato_despesas`** — as tabelas existiam desde antes da convenção `dim_`/`fato_` ser uniformizada; a migração usa `ALTER TABLE IF EXISTS ... RENAME TO ...`, segura tanto numa base nova (vira no-op) quanto na já populada no Supabase (preserva os dados).
+- **Colunas só do endpoint de detalhe foram removidas** (`descricao_tipo`, `descricao_situacao`, `url_inteiro_teor`, etc.) — ficariam permanentemente `NULL`, pois só `/proposicoes/{id}` as preenche (~700 chamadas extras/semana, fora do escopo atual). Se um enriquecimento seletivo for implementado no futuro, as colunas entram via migração junto com os dados.
 
 ---
 
@@ -219,6 +241,33 @@ python -m src.ai.run_classify --confirmar
 ```
 
 Requer `OPENAI_API_KEY` no `.env`. Custo típico para ~700 proposições: < U$ 0,01.
+
+### Decisões
+
+- **Embeddings + similaridade de cosseno em vez de 1 chamada de LLM por proposição** — classificar ~700 proposições/semana via prompt de LLM custaria muito mais e seria mais lento (1 chamada por item). Com embeddings, cada ementa vira um vetor e é comparada contra apenas 10 vetores de referência (os temas) — `text-embedding-3-small` custa uma fração do preço de um modelo de chat e o resultado é determinístico (mesma ementa → mesmo tema sempre).
+- **Correspondência semântica em vez de palavras-chave** — uma ementa pode tratar de "vacinação" sem usar a palavra "saúde"; embeddings capturam esse significado, enquanto um classificador por keywords exigiria manter listas de sinônimos para cada tema.
+- **`themes.py` como fonte única da verdade** — o dicionário `TEMAS` (tema → descrição semântica rica) é usado tanto para popular `dim_temas` quanto para gerar os 10 vetores de referência. Mudar uma descrição ali muda automaticamente a classificação, sem precisar editar o banco ou o código de classificação.
+
+### Prompt — descrições de referência dos temas
+
+Não há um "prompt" de chat aqui: cada tema em `src/ai/themes.py` tem uma descrição
+curta e densa em palavras-chave, usada para gerar o embedding de referência contra
+o qual cada ementa é comparada. Exemplos:
+
+```python
+TEMAS: dict[str, str] = {
+    "Saúde": (
+        "Saúde pública, SUS, medicamentos, hospitais, vigilância sanitária, "
+        "planos de saúde, vacinação, doenças, profissionais de saúde"
+    ),
+    "Tecnologia": (
+        "Inovação, tecnologia da informação, inteligência artificial, internet, "
+        "startups, telecomunicações, transformação digital, dados, cibersegurança"
+    ),
+    # ... mais 8 temas (Tributário, Trabalho, Meio Ambiente, Segurança Pública,
+    # Educação, Infraestrutura, Direitos Humanos, Administrativo)
+}
+```
 
 ---
 
@@ -315,10 +364,20 @@ Trigger semanal
 
 ```
 n8n/
-├── queries.sql                  # 5 queries — cole em cada nó Postgres
-├── prompt_resumo_executivo.txt  # prompt do nó OpenAI
-└── email_template.html          # template HTML do corpo do email
+├── workflow_radar_legislativo.json  # export completo do workflow (importável no n8n)
+├── queries.sql                      # 5 queries — cole em cada nó Postgres
+├── prompt_resumo_executivo.txt      # prompt do nó OpenAI
+├── email_template.html              # template HTML do corpo do email
+└── execucao_sucesso.png             # print de uma execução completa (todos os nós ✅)
 ```
+
+### Execução bem-sucedida
+
+![Execução completa do workflow no n8n](./n8n/execucao_sucesso.png)
+
+Fluxo completo: `Toda Segunda 8h` → `HTTP Request` (dispara o pipeline no GitHub
+Actions) → `Wait` → 5 nós Postgres em paralelo → `Merge` → `Montar Contexto` →
+`Resumo Executivo AI` → `Enviar Email`. Todos os nós concluídos com sucesso (✅).
 
 ### Seções do briefing gerado
 
@@ -327,6 +386,33 @@ n8n/
 3. **Posição dos partidos** — % favorável, votos Sim/Não/Abstenção por partido
 4. **Cota parlamentar** — categorias de maior gasto + top 5 deputados do mês
 5. **Ponto de atenção** — o que monitorar na próxima semana
+
+### Prompt — resumo executivo (nó OpenAI)
+
+`n8n/prompt_resumo_executivo.txt`, enviado com os resultados das 5 queries
+(`temas`, `votacoes`, `partidos`, `despesas_cat`, `top_gastadores`) interpolados
+pelo nó "Montar Contexto":
+
+```
+Você é um analista político especializado no Congresso Nacional brasileiro.
+Com base nos dados abaixo, escreva um briefing executivo semanal para um executivo
+que precisa acompanhar a pauta legislativa (máximo 400 palavras).
+
+Estrutura obrigatória:
+1. **Pauta da semana** — temas dominantes e volume de proposições por área
+2. **Votações e placar** — o que foi aprovado/rejeitado e por quanto (Sim x Não)
+3. **Posição dos partidos** — quais partidos votaram a favor ou contra nas principais pautas
+4. **Cota parlamentar** — categorias onde mais se gastou e os 5 maiores gastadores do mês
+5. **Ponto de atenção** — o que monitorar na próxima semana
+
+Tom: direto, profissional, números concretos, sem jargão jurídico excessivo.
+Use os dados fornecidos — não invente informações que não estejam abaixo.
+```
+
+**Decisão**: limite de 400 palavras e estrutura fixa em 5 seções para que o
+briefing seja consistente semana a semana e caiba num email curto; a instrução
+"não invente informações" reduz alucinação, já que todos os números relevantes
+já vêm prontos das queries SQL — a IA só precisa narrar, não calcular.
 
 ---
 

@@ -1,0 +1,431 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1168,
+        80
+      ],
+      "id": "9fe4bbb6-e3ef-49e0-8477-ff2d787c4bda",
+      "name": "Toda Segunda 8h"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    t.nome_tema                                              AS tema,\n    COUNT(*)                                                 AS total,\n    STRING_AGG(\n        p.sigla_tipo || ' ' || p.numero || '/' || p.ano || ': ' || LEFT(p.ementa, 80),\n        ' | ' ORDER BY p.data_apresentacao DESC\n    )                                                        AS exemplos\nFROM fato_proposicoes p\nJOIN dim_temas t ON t.id_tema = p.id_tema\nWHERE p.data_apresentacao >= NOW() - INTERVAL '7 days'\nGROUP BY t.nome_tema\nORDER BY total DESC",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -480,
+        -224
+      ],
+      "id": "00429bb6-bed2-45b3-9f60-d0c507b8175b",
+      "name": "Proposições por Tema",
+      "credentials": {
+        "postgres": {
+          "id": "Dv8FjMDXIq5DLr03",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    v.data,\n    v.descricao,\n    CASE WHEN v.aprovacao = 1 THEN 'APROVADA' ELSE 'REJEITADA' END AS resultado,\n    p.sigla_tipo || ' ' || p.numero || '/' || p.ano                AS proposicao,\n    p.tema_ia,\n    (SELECT COUNT(*) FROM fato_votos fv\n     WHERE fv.id_votacao = v.id AND fv.tipo_voto = 'Sim')          AS votos_sim,\n    (SELECT COUNT(*) FROM fato_votos fv\n     WHERE fv.id_votacao = v.id AND fv.tipo_voto = 'Não')          AS votos_nao\nFROM fato_votacoes v\nLEFT JOIN fato_proposicoes p ON p.id = v.id_proposicao\nWHERE v.data >= NOW() - INTERVAL '7 days'\nORDER BY v.data DESC\nLIMIT 15",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -480,
+        -80
+      ],
+      "id": "4793061f-18ac-4ac2-abb8-33a9c9acac2a",
+      "name": "Votações Recentes",
+      "credentials": {
+        "postgres": {
+          "id": "Dv8FjMDXIq5DLr03",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "language": "pythonNative",
+        "pythonCode": "# Sem imports — tudo com métodos nativos de string\n\nproposicoes    = [i for i in _items if 'tema' in i['json'] and 'resultado' not in i['json'] and 'total_votos' not in i['json']]\nvotacoes       = [i for i in _items if 'resultado' in i['json']]\npartidos       = [i for i in _items if 'total_votos' in i['json']]\ndespesas_cat   = [i for i in _items if 'tipo_despesa' in i['json']]\ntop_gastadores = [i for i in _items if 'total_gasto' in i['json']]\n\ndef get_placar(item, campo):\n    val = item['json'].get(campo)\n    if val is not None and int(val) > 0:\n        return str(val)\n    desc = item['json'].get('descricao', '') or ''\n    marker = 'Sim:' if campo == 'votos_sim' else 'Não:'\n    idx = desc.find(marker)\n    if idx == -1:\n        return '-'\n    after = desc[idx + len(marker):].strip()\n    num = ''\n    for c in after:\n        if c.isdigit():\n            num += c\n        elif num:\n            break\n    return num if num else '-'\n\ntemas_txt = \"\\n\".join(\n    str(i['json']['tema']) + \": \" + str(i['json']['total']) + \" proposições\"\n    for i in proposicoes\n)\n\nvotacoes_txt = \"\\n\".join(\n    \"[\" + str(i['json']['resultado']) + \"] \" +\n    str(i['json'].get('descricao') or i['json'].get('proposicao') or '(sem descrição)')[:80] +\n    \" | \" + get_placar(i, 'votos_sim') + \" Sim x \" + get_placar(i, 'votos_nao') + \" Não\"\n    for i in votacoes\n)\n\npartidos_txt = \"\\n\".join(\n    str(i['json']['sigla_partido']) + \": \" + str(i['json']['pct_favoravel']) + \"% favorável\" +\n    \" (\" + str(i['json']['votos_sim']) + \" Sim / \" + str(i['json']['votos_nao']) + \" Não)\"\n    for i in partidos\n)\n\ndespesas_txt = \"\\n\".join(\n    str(i['json']['tipo_despesa']) + \": R$ \" + str(i['json']['total_liquido']) +\n    \" (\" + str(i['json']['qtd_documentos']) + \" reembolsos)\"\n    for i in despesas_cat\n)\n\ngastadores_txt = \"\\n\".join(\n    str(i['json']['nome']) + \" (\" + str(i['json']['sigla_partido']) + \"-\" + str(i['json']['sigla_uf']) + \"): R$ \" + str(i['json']['total_gasto'])\n    for i in top_gastadores\n)\n\ndef th(cols):\n    return \"<tr style='background:#eef2ff'>\" + \"\".join(\n        \"<th style='padding:7px 10px;border:1px solid #ccc;color:#3730a3'>\" + c + \"</th>\"\n        for c in cols\n    ) + \"</tr>\"\n\ndef td(vals):\n    return \"<tr>\" + \"\".join(\n        \"<td style='padding:7px 10px;border:1px solid #e5e7eb'>\" + str(v) + \"</td>\"\n        for v in vals\n    ) + \"</tr>\"\n\ndef tabela(header_cols, rows):\n    if not rows:\n        return \"<p style='color:#9ca3af;font-style:italic;font-size:13px'>Sem dados para este período.</p>\"\n    return \"<table style='border-collapse:collapse;width:100%;font-size:13px'>\" + th(header_cols) + \"\".join(rows) + \"</table>\"\n\ntemas_html = tabela(\n    [\"Tema\", \"Proposições\"],\n    [td([i['json']['tema'], \"<b>\" + str(i['json']['total']) + \"</b>\"]) for i in proposicoes]\n)\n\nvotacoes_html = tabela(\n    [\"Resultado\", \"Descrição\", \"Sim\", \"Não\", \"Tema\"],\n    [td([\n        \"<b style='color:\" + (\"green\" if i['json']['resultado'] == \"APROVADA\" else \"red\") + \"'>\" + str(i['json']['resultado']) + \"</b>\",\n        str(i['json'].get('descricao') or i['json'].get('proposicao') or '')[:150],\n        get_placar(i, 'votos_sim'),\n        get_placar(i, 'votos_nao'),\n        str(i['json'].get('tema_ia') or '-')\n    ]) for i in votacoes]\n)\n\npartidos_html = tabela(\n    [\"Partido\", \"% Favorável\", \"Sim\", \"Não\", \"Abstenções\"],\n    [td([\n        \"<b>\" + str(i['json']['sigla_partido']) + \"</b>\",\n        str(i['json']['pct_favoravel']) + \"%\",\n        str(i['json']['votos_sim']),\n        str(i['json']['votos_nao']),\n        str(i['json']['abstencoes'])\n    ]) for i in partidos]\n)\n\ndespesas_html = tabela(\n    [\"Categoria\", \"Total Líquido\", \"Reembolsos\", \"Ticket Médio\"],\n    [td([\n        str(i['json']['tipo_despesa']),\n        \"R$ \" + str(i['json']['total_liquido']),\n        str(i['json']['qtd_documentos']),\n        \"R$ \" + str(i['json']['ticket_medio'])\n    ]) for i in despesas_cat]\n)\n\ngastadores_html = tabela(\n    [\"Deputado\", \"Partido\", \"UF\", \"Total Gasto\", \"Reembolsos\"],\n    [td([\n        str(i['json']['nome']),\n        str(i['json']['sigla_partido']),\n        str(i['json']['sigla_uf']),\n        \"<b>R$ \" + str(i['json']['total_gasto']) + \"</b>\",\n        str(i['json']['qtd_documentos'])\n    ]) for i in top_gastadores]\n)\n\nreturn [{\"json\": {\n    \"temas\": temas_txt,\n    \"votacoes\": votacoes_txt,\n    \"partidos\": partidos_txt,\n    \"despesas_cat\": despesas_txt,\n    \"top_gastadores\": gastadores_txt,\n    \"temas_html\": temas_html,\n    \"votacoes_html\": votacoes_html,\n    \"partidos_html\": partidos_html,\n    \"despesas_html\": despesas_html,\n    \"gastadores_html\": gastadores_html\n}}]\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        64
+      ],
+      "id": "129df3ca-4804-48b0-a69d-9f9855557b90",
+      "name": "Montar Contexto"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Você é um analista político especializado no Congresso Nacional brasileiro"
+            },
+            {
+              "content": "=Você é um analista político especializado no Congresso Nacional brasileiro.\nCom base nos dados abaixo, escreva um briefing executivo semanal conciso (máximo 300 palavras)\npara um executivo que precisa acompanhar a pauta legislativa.\n\nEstrutura obrigatória:\n1. **Destaques da semana** (2-3 frases sobre os temas dominantes)\n2. **Votações importantes** (liste as aprovadas/rejeitadas com impacto)\n3. **Tendência temática** (qual tema está dominando e por quê isso importa)\n4. **Ponto de atenção** (algo que merece monitoramento na próxima semana)\n\nTom: direto, profissional, sem jargão jurídico excessivo.\n\n---\nDADOS DA SEMANA:\n\nPROPOSIÇÕES POR TEMA:\n{{ $node[\"Montar Contexto\"].json.temas }}\n\nVOTAÇÕES RECENTES:\n{{ $node[\"Montar Contexto\"].json.votacoes }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        368,
+        64
+      ],
+      "id": "40e6b05b-93b6-4a74-880d-b5249babcc79",
+      "name": "Resumo Executivo AI",
+      "credentials": {
+        "openAiApi": {
+          "id": "miBQErVksy1pKzWD",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "yurixfmm@gmail.com",
+        "subject": "=🏛️ Radar Legislativo — Semana de {{ $now.toFormat('dd/MM/yyyy') }}",
+        "message": "=<h2>🏛️ Radar Legislativo Semanal</h2>\n\n<p style=\"background:#f9f9f9;padding:12px;border-left:4px solid #1a73e8\">\n{{ $node[\"Resumo Executivo AI\"].json.output[0].content[0].text\n   .replace(/^#{1,3}\\s.*\\n?/gm, \"\")\n   .replace(/^\\n+/, \"\")\n   .replace(/\\n/g, \"<br>\")\n   .replace(/\\*\\*(.*?)\\*\\*/g, \"<strong>$1</strong>\") }}\n</p>\n\n<h3>📋 Proposições por Tema</h3>\n{{ $node[\"Montar Contexto\"].json.temas_html }}\n\n<h3>🗳️ Votações da Semana</h3>\n<p style=\"font-size:12px;color:#6b7280;margin:0 0 8px 0\">\n  Votações sem placar (—) são decisões procedurais aprovadas pela Mesa Diretora sem votação nominal — ex.: encaminhamento a comissões, regime de urgência por acordo. Apenas votações com chamada nominal registram votos individuais por deputado.\n</p>\n{{ $node[\"Montar Contexto\"].json.votacoes_html }}\n\n<h3>🏛️ Posição dos Partidos</h3>\n{{ $node[\"Montar Contexto\"].json.partidos_html }}\n\n<h3>💰 Cota Parlamentar — Categorias de Gasto</h3>\n{{ $node[\"Montar Contexto\"].json.despesas_html }}\n\n<h3>💳 Top 5 Deputados por Gasto</h3>\n{{ $node[\"Montar Contexto\"].json.gastadores_html }}\n\n<hr>\n<small>Gerado automaticamente pelo pipeline Bússola Pública</small>\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        688,
+        64
+      ],
+      "id": "c27428ae-a88c-4621-91b5-fed522199fd5",
+      "name": "Enviar Email",
+      "webhookId": "325e0878-973f-4cf9-8cd8-3d6893bb49da",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "Zcbm8X7ScoZu95Sj",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    d.sigla_partido,\n    COUNT(*)                                                      AS total_votos,\n    SUM(CASE WHEN fv.tipo_voto = 'Sim'       THEN 1 ELSE 0 END)  AS votos_sim,\n    SUM(CASE WHEN fv.tipo_voto = 'Não'       THEN 1 ELSE 0 END)  AS votos_nao,\n    SUM(CASE WHEN fv.tipo_voto = 'Abstenção' THEN 1 ELSE 0 END)  AS abstencoes,\n    ROUND(\n        100.0 * SUM(CASE WHEN fv.tipo_voto = 'Sim' THEN 1 ELSE 0 END)\n        / NULLIF(COUNT(*), 0), 1\n    )                                                             AS pct_favoravel\nFROM fato_votos fv\nJOIN dim_deputados d  ON d.id  = fv.id_deputado\nJOIN fato_votacoes vt ON vt.id = fv.id_votacao\nWHERE vt.data >= NOW() - INTERVAL '7 days'\nGROUP BY d.sigla_partido\nHAVING COUNT(*) >= 5\nORDER BY total_votos DESC\nLIMIT 12;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -480,
+        64
+      ],
+      "id": "cdc28c3d-0e4c-40b4-bd2b-126dadb28e3f",
+      "name": "Posição dos Partidos",
+      "credentials": {
+        "postgres": {
+          "id": "Dv8FjMDXIq5DLr03",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    d.nome,\n    d.sigla_partido,\n    d.sigla_uf,\n    ROUND(SUM(de.valor_liquido)::numeric, 2)  AS total_gasto,\n    COUNT(*)                                   AS qtd_documentos\nFROM fato_despesas de\nJOIN dim_deputados d ON d.id = de.id_deputado\nWHERE de.ano = EXTRACT(YEAR  FROM NOW() - INTERVAL '1 month')\n  AND de.mes = EXTRACT(MONTH FROM NOW() - INTERVAL '1 month')\nGROUP BY d.nome, d.sigla_partido, d.sigla_uf\nORDER BY total_gasto DESC\nLIMIT 5",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -480,
+        368
+      ],
+      "id": "d9aea2d8-681d-40cd-8b6d-26502fbdb2c0",
+      "name": "Top Gastadores",
+      "credentials": {
+        "postgres": {
+          "id": "Dv8FjMDXIq5DLr03",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    de.tipo_despesa                                          AS tipo_despesa,\n    COUNT(*)                                                 AS qtd_documentos,\n    ROUND(SUM(de.valor_liquido)::numeric, 2)                 AS total_liquido,\n    ROUND(AVG(de.valor_liquido)::numeric, 2)                 AS ticket_medio\nFROM fato_despesas de\nWHERE de.ano = EXTRACT(YEAR  FROM NOW() - INTERVAL '1 month')\n  AND de.mes = EXTRACT(MONTH FROM NOW() - INTERVAL '1 month')\nGROUP BY de.tipo_despesa\nORDER BY total_liquido DESC\nLIMIT 8",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -480,
+        224
+      ],
+      "id": "7667dfd5-a99d-46a5-b574-8be7c60ca0dd",
+      "name": "Despesas por Categoria",
+      "credentials": {
+        "postgres": {
+          "id": "Dv8FjMDXIq5DLr03",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "numberInputs": 5
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        -16,
+        16
+      ],
+      "id": "3efd60b9-5395-4537-b355-c6b7e431121a",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/Yurixfm/radar-legislativo/actions/workflows/pipeline_semanal.yml/dispatches",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpBearerAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ \"ref\": \"main\" }",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -976,
+        80
+      ],
+      "id": "c87c6de2-e8e9-4858-8177-eb306bd5e7e7",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "JWs26ZPwoqPOGUTU",
+          "name": "Bearer Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "unit": "minutes"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -832,
+        80
+      ],
+      "id": "fa767790-9d14-43c9-9653-de9e8e4d1ad8",
+      "name": "Wait",
+      "webhookId": "17df9c53-b841-4f78-a9e1-0c61fd971c0d"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Toda Segunda 8h": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Proposições por Tema": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Votações Recentes": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Montar Contexto": {
+      "main": [
+        [
+          {
+            "node": "Resumo Executivo AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumo Executivo AI": {
+      "main": [
+        [
+          {
+            "node": "Enviar Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Posição dos Partidos": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Top Gastadores": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Despesas por Categoria": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Montar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Posição dos Partidos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Votações Recentes",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Proposições por Tema",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Despesas por Categoria",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Top Gastadores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "8bf4ff1e-9dbc-4f80-bfb0-58dfaf8a7e8c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "315bc2d0bba11bf283c3b9e280dd0f7bc8f41c4470c9e27110b664c507304f6a"
+  },
+  "nodeGroups": [],
+  "id": "NQL9FDST1DBaAaSm",
+  "tags": []
+}
