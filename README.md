@@ -445,6 +445,7 @@ pip install -r requirements.txt
 | Recurso | URL |
 |---|---|
 | Código-fonte | https://github.com/Yurixfm/radar-legislativo |
+| Workflow n8n (export .json) | https://github.com/Yurixfm/radar-legislativo/blob/main/n8n/workflow_radar_legislativo.json |
 | Banco de dados (Supabase) | https://supabase.com/dashboard/project/wszwoboaysikoiddpmks |
 | API pública do projeto | https://wszwoboaysikoiddpmks.supabase.co |
 
